@@ -25,6 +25,9 @@ namespace DiscordMusicRecs
 			public string Password { get; set; }
 			public string User { get; set; }
 			public string Port { get; set; }
+			public string DbName { get; set; }
+			public string MainTableName { get; set; }
+			public string LogTableName { get; set; }
 
 		}
 	}

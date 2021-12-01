@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -31,11 +32,10 @@ internal class YoutubeAPIs
 		UserCredential credential;
 		await using (var stream = new FileStream("client_secret_youtube.json", FileMode.Open, FileAccess.Read))
 		{
-			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-				(await GoogleClientSecrets.FromStreamAsync(stream)).Secrets,
+			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream)).Secrets,
 				// This OAuth 2.0 access scope allows for full read/write access to the
 				// authenticated user's account.
-				new[] { YouTubeService.Scope.Youtube },
+				new[] { YouTubeService.Scope.Youtube},
 				"user",
 				CancellationToken.None,
 				new FileDataStore(GetType().ToString())
@@ -45,7 +45,7 @@ internal class YoutubeAPIs
 		youTubeService = new YouTubeService(new BaseClientService.Initializer()
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = GetType().ToString()
+			ApplicationName = GetType().ToString() + Dns.GetHostName()
 		});
 		initialized = true;
 	}
@@ -65,7 +65,8 @@ internal class YoutubeAPIs
     }
 
     //https://developers.google.com/youtube/v3/code_samples/dotnet
-		public async Task<string> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "", string playlistDescription = "")
+	public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
+            string playlistDescription = "")
 	{
 		if (!initialized)
 			await this.Initialize();
@@ -81,9 +82,9 @@ internal class YoutubeAPIs
 			await foreach (var existingVideoId in GetVideoIdsInPlaylist(playlistId))
 			{
 				if (existingVideoId == videoID)
-				{
-					return "existing";
-				}
+                {
+                    throw new Exception("Video already exists in playlist");
+                }
 			}
 		}
 
@@ -116,30 +117,29 @@ internal class YoutubeAPIs
 
 		Console.WriteLine(
 			$"Playlist item id {videoToAdd.Id} (video ID {videoID}) was added to playlist id {videoToAdd.Snippet.PlaylistId} @ url https://www.youtube.com/playlist?list={videoToAdd.Snippet.PlaylistId}");
-		return videoToAdd.Snippet.PlaylistId;
+		return videoToAdd;
 	}
+     private async IAsyncEnumerable<PlaylistItem> GetPlaylistItemsInPlaylist(string playlistId)
+     {
+	     if (!initialized)
+             await this.Initialize();
+         var pagingToken = "";
+         while (pagingToken is not null)
+         {
+             Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
+             var playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
+             playlistItemsRequest.PlaylistId = playlistId;
+             playlistItemsRequest.MaxResults = 100;
+             playlistItemsRequest.PageToken = pagingToken;
+             var playlistItems = await playlistItemsRequest.ExecuteAsync();
+             foreach (var playlistItem in playlistItems.Items)
+             {
+                 yield return playlistItem;
+             }
 
-        private async IAsyncEnumerable<PlaylistItem> GetPlaylistItemsInPlaylist(string playlistId)
-        {
-            if (!initialized)
-                await this.Initialize();
-            var pagingToken = "";
-            while (pagingToken is not null)
-            {
-                Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-                var playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
-                playlistItemsRequest.PlaylistId = playlistId;
-                playlistItemsRequest.MaxResults = 100;
-                playlistItemsRequest.PageToken = pagingToken;
-                var playlistItems = await playlistItemsRequest.ExecuteAsync();
-                foreach (var playlistItem in playlistItems.Items)
-                {
-                    yield return playlistItem;
-                }
-
-                pagingToken = playlistItems.NextPageToken;
-            }
-        }
+             pagingToken = playlistItems.NextPageToken;
+         }
+     }
 	private IAsyncEnumerable<string> GetVideoIdsInPlaylist(string playlistId) => GetPlaylistItemsInPlaylist(playlistId).Select(video => video.Snippet.ResourceId.VideoId);
 
     public async IAsyncEnumerable<Playlist> GetMyPlaylists()
@@ -221,11 +221,11 @@ internal class YoutubeAPIs
     {
         if (string.IsNullOrWhiteSpace(playlistId))
         {
-            throw new ArgumentNullException("playlistId is null or whitespace");
+            throw new ArgumentException("playlistId is null or whitespace");
         }
         if (string.IsNullOrWhiteSpace(videoId))
         {
-            throw new ArgumentNullException("videoId is null or whitespace");
+            throw new ArgumentException("videoId is null or whitespace");
         }
 
         var vidsRemoved = 0;

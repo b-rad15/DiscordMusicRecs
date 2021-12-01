@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
+using DSharpPlus.Exceptions;
+using DSharpPlus.Interactivity;
+using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.SlashCommands;
 using Google.Apis.YouTube.v3.Data;
 using Npgsql;
@@ -32,10 +35,11 @@ internal class Program
     public static readonly Regex iShouldJustCopyStackOverflowYoutubeRegex = new(
         @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$");
 
-    private static bool removeNonUrls;
+    private static bool removeNonUrls = false;
     public static DiscordUser? BotOwnerDiscordUser;
     public static Configuration Config => _config ??= Configuration.ReadConfig();
 
+    public static InteractivityExtension Interactivity;
     private static async Task MainAsync(string[] args)
     {
         Discord = new DiscordClient(new DiscordConfiguration
@@ -46,10 +50,91 @@ internal class Program
         });
         BotOwnerDiscordUser = await Discord.GetUserAsync(BotOwnerId);
         Discord.MessageCreated += OnDiscordOnMessageCreated;
+        Discord.MessageReactionAdded += DiscordOnMessageReactionAdded;
+        Discord.MessageReactionRemoved += DiscordOnMessageReactionAdded;
         var slashCommands = Discord.UseSlashCommands();
+        Interactivity = Discord.UseInteractivity(new InteractivityConfiguration
+        {
+            AckPaginationButtons = true
+        });
         slashCommands.RegisterCommands<SlashCommands>();
         await Discord.ConnectAsync();
         await Task.Delay(-1);
+    }
+
+    private static async Task<int> GetNumberOfReactions(DiscordMessage message, string emojiName)
+    {
+	    IReadOnlyCollection<DiscordUser> reactions;
+
+        try
+		{
+			reactions = await message.GetReactionsAsync(DiscordEmoji.FromUnicode(emojiName));
+		}
+		catch (NotFoundException)
+		{
+			return 0;
+		}
+
+        return reactions.Count;
+    }
+
+    public static readonly DiscordEmoji UpvoteEmoji = DiscordEmoji.FromUnicode("👍");
+    public static readonly DiscordEmoji DownvoteEmoji = DiscordEmoji.FromUnicode("👎");
+    private static async Task<(int, int)> CountVotes(DiscordMessage message)
+    {
+	    // var reactions = message.Reactions;
+	    // int upvotes = 0;
+	    // int downvotes = 0;
+	    // foreach (var reaction in reactions)
+	    // {
+		   //  if (reaction.Emoji == UpvoteEmoji)
+		   //  {
+			  //   ++upvotes;
+		   //  }
+		   //  else if(reaction.Emoji == DownvoteEmoji)
+		   //  {
+			  //   ++downvotes;
+		   //  }
+	    // }
+
+	    var upvoteOnlycount = await GetNumberOfReactions(message, "👍");
+	    var downvoteOnlycount = await GetNumberOfReactions(message, "👎");
+	    return (upvoteOnlycount, downvoteOnlycount);
+    }
+    private static async Task DiscordOnMessageReactionAdded(DiscordClient sender, DiscordEventArgs e)
+    {
+	    DiscordMessage message;
+	    switch (e)
+        {
+            case MessageReactionAddEventArgs mraea:
+	            message = mraea.Message;
+                break;
+            case MessageReactionRemoveEventArgs mrrea:
+	            message = mrrea.Message;
+                break;
+            default:
+                await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?");
+                return;
+        }
+	    var rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: message.ChannelId);
+	    if (rowData?.playlistId is null)
+	    {
+		    return;
+	    }
+	    var playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.Value.playlistId, message.Id);
+	    if (playlistEntryData is null)
+	    {
+		    return;
+	    }
+
+	    await UpdateVotes(message, rowData.Value.playlistId);
+
+    }
+
+    private static async Task UpdateVotes(DiscordMessage message, string playlistId)
+    {
+		    var (upvotes, downvotes) = await CountVotes(message);
+		    await Database.Instance.UpdateVotes(messageId: message.Id, playlistId:playlistId, upvotes:upvotes, downvotes:downvotes);
     }
 
     private static Task OnDiscordOnMessageCreated(DiscordClient sender, MessageCreateEventArgs e)
@@ -61,18 +146,21 @@ internal class Program
                 //                   $"Channel ID: {e.Message.ChannelId}\n" +
                 //                   $"Server ID: {e.Guild.Id}\n");
                 var shouldDeleteMessage = false;
-                ulong recsChannelId;
+                ulong? recsChannelId = null;
+                Database.MainData? rowData = null;
                 try
                 {
-                    recsChannelId = await Database.Instance.GetChannelId(Database.TableName, e.Guild.Id);
+                    rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: e.Channel.Id);
+                    recsChannelId = rowData?.channelId; //null if rowData is null otherwise channelId
                 }
                 catch (Exception exception)
                 {
                     Debugger.Break();
                     await Console.Error.WriteLineAsync(exception.ToString());
-                    recsChannelId = ulong.MaxValue;
+                    recsChannelId = null;
+                    return;
                 }
-                if (e.Channel.Id == recsChannelId)
+                if (rowData.HasValue)
                 {
                     Match match;
                     if ((match = iShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
@@ -90,43 +178,42 @@ internal class Program
                             goto deleteMessage;
                         }
 
-                        var playlistId = "";
+                        var playlistId = rowData?.playlistId;
+                        success = !string.IsNullOrWhiteSpace(rowData?.playlistId);
+
+
                         try
                         {
-                            playlistId = await Database.Instance.GetPlaylistId(Database.TableName, e.Guild.Id);
-                            success = !string.IsNullOrWhiteSpace(playlistId);
-                        }
-                        catch (InvalidCastException)
-                        {
-                            //No playlist_id in row, expected
+                            var usedPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, playlistId,
+                                $"{e.Guild.Name} Music Recommendation Playlist");
+                            await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation");
+                            await e.Message.CreateReactionAsync(UpvoteEmoji);
+                            await e.Message.CreateReactionAsync(DownvoteEmoji);
+                            if (usedPlaylistItem.Snippet.PlaylistId != playlistId)
+                            {
+                                await Database.Instance.ChangePlaylistId(Database.MainTableName, e.Guild.Id,
+                                    e.Channel.Id, usedPlaylistItem.Snippet.PlaylistId);
+                                await Database.Instance.MakePlaylistTable(usedPlaylistItem.Snippet.PlaylistId);
+                            }
+
+                            await Database.Instance.AddVideoToPlaylistTable(usedPlaylistItem.Snippet.PlaylistId, id, usedPlaylistItem.Id, e.Channel.Id, e.Author.Id,
+                                e.Message.Timestamp, e.Message.Id);
                         }
                         catch (Exception exception)
                         {
-                            Debugger.Break();
-                            await Console.Error.WriteLineAsync("Non-Raised Error");
-                            await Console.Error.WriteLineAsync(exception.ToString());
-                        }
-
-                        var usedPlaylistId = await YoutubeAPIs.Instance.AddToPlaylist(id, playlistId,
-                            $"{e.Guild.Name} Music Recommendation Playlist");
-                        switch (usedPlaylistId)
-                        {
-                            case "existing":
+                            if (exception.Message == "Video already exists in playlist")
+                            {
                                 var badMessage =
                                     await Discord.SendMessageAsync(e.Channel, "Video already in playlist");
                                 await Task.Delay(5000);
                                 await badMessage.DeleteAsync();
                                 shouldDeleteMessage = true;
-                                break;
-                            default:
-                                await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation");
-                                if (usedPlaylistId != playlistId)
-                                    await Database.Instance.ChangePlaylistId(Database.TableName, e.Guild.Id,
-                                        e.Channel.Id, usedPlaylistId);
-
-                                Console.WriteLine(
-                                    await Database.Instance.GetChannelId(Database.TableName, e.Guild.Id));
-                                break;
+                            }
+                            else
+                            {
+                                await Console.Error.WriteLineAsync(exception.ToString());
+                                throw;
+                            }
                         }
                     }
                     else
@@ -149,216 +236,18 @@ internal class Program
         return Task.CompletedTask;
     }
 
-    private async void OldSuggestion(MessageCreateEventArgs e)
-    {
-        // Console.WriteLine($"Message ID: {e.Message.Id}\n" +
-        //                   $"Channel ID: {e.Message.ChannelId}\n" +
-        //                   $"Server ID: {e.Guild.Id}\n");
-        var shouldDeleteMessage = false;
-        if (e.Message.Content.StartsWith("!help"))
-        {
-            var baseHelpCommand =
-                "use !setchannel <#channel-mention> to set channel where recommendations are taken\n" +
-                "use !recsplaylist to get this server's recommendation playlist\n" +
-                "use !randomrec to get a random recommendation from the playlist\n";
-            try
-            {
-                var recsChannel =
-                    await Discord.GetChannelAsync(
-                        await Database.Instance.GetChannelId(Database.TableName, e.Guild.Id));
-                var msg = await new DiscordMessageBuilder()
-                    .WithContent(
-                        baseHelpCommand +
-                        $"send a youtube link in the recommendation channel {recsChannel.Mention} to recommend a song")
-                    .SendAsync(e.Channel);
-            }
-            catch (Exception exception)
-            {
-                Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString());
-                var msg = await new DiscordMessageBuilder()
-                    .WithContent(
-                        baseHelpCommand +
-                        "send a youtube link in the recommendation channel after setting up with !setchannel to recommend a song")
-                    .SendAsync(e.Channel);
-            }
-        }
-        else if (e.Message.Content.StartsWith("!setchannel"))
-        {
-            if (e.Author.Id == 207600801928052737)
-            {
-                if (e.MentionedChannels.Count == 0)
-                {
-                    await new DiscordMessageBuilder()
-                        .WithContent("Mention a channel")
-                        .SendAsync(e.Channel);
-                    return;
-                }
-
-                var newRecChannel = e.MentionedChannels[0];
-                try
-                {
-                    await Database.Instance.ChangeChannelId(Database.TableName, e.Guild.Id, newRecChannel.Id);
-                }
-                catch (PostgresException pgException)
-                {
-                    await Database.Instance.InsertRow(Database.TableName, e.Guild.Id, newRecChannel.Id);
-                }
-                catch (Exception exception)
-                {
-                    Debugger.Break();
-                    await Console.Error.WriteLineAsync(exception.ToString());
-                    await new DiscordMessageBuilder()
-                        .WithContent("Failed to modify recs channel, ask {user.Mention} to check logs")
-                        .WithAllowedMentions(new IMention[] { new UserMention(207600801928052737) })
-                        .SendAsync(e.Channel);
-                }
-            }
-            else
-            {
-                await new DiscordMessageBuilder()
-                    .WithContent("https://j.gifs.com/mZYXVp.gif")
-                    .SendAsync(e.Channel);
-            }
-        }
-        else if (e.Message.Content.StartsWith("!recsplaylist"))
-        {
-            try
-            {
-                var playlistUrl =
-                    $"https://www.youtube.com/playlist?list={await Database.Instance.GetPlaylistId(Database.TableName, e.Guild.Id)}";
-                await new DiscordMessageBuilder()
-                    .WithContent($"This Server's Recommendation is {playlistUrl}")
-                    .SendAsync(e.Channel);
-            }
-            catch (Exception exception)
-            {
-                Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString());
-                await new DiscordMessageBuilder()
-                    .WithContent(
-                        "No Playlist found, if videos have been added, ask {user.Mention} to check logs")
-                    .WithAllowedMentions(new IMention[] { new UserMention(207600801928052737) })
-                    .SendAsync(e.Channel);
-            }
-        }
-        else if (e.Message.Content.StartsWith("!randomrec"))
-        {
-            try
-            {
-                var randomVid =
-                    $"https://www.youtube.com/watch?v={await YoutubeAPIs.Instance.GetRandomVideoInPlaylist(await Database.Instance.GetPlaylistId(Database.TableName, e.Guild.Id))}";
-                await new DiscordMessageBuilder()
-                    .WithContent($"You should listen to {randomVid}")
-                    .SendAsync(e.Channel);
-            }
-            catch (Exception exception)
-            {
-                Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString());
-                await new DiscordMessageBuilder()
-                    .WithContent(
-                        "No Playlist or Videos found, if videos have been added, ask {user.Mention} to check logs")
-                    .WithAllowedMentions(new IMention[] { new UserMention(207600801928052737) })
-                    .SendAsync(e.Channel);
-            }
-        }
-        else
-        {
-            ulong recsChannelId;
-            try
-            {
-                recsChannelId = await Database.Instance.GetChannelId(Database.TableName, e.Guild.Id);
-            }
-            catch (Exception exception)
-            {
-                Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString());
-                recsChannelId = ulong.MaxValue;
-            }
-
-            if (e.Channel.Id == recsChannelId)
-            {
-                Match match;
-                if ((match = iShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
-                    match.Groups[5].Value is not "playlist" or "watch" or "channel")
-                {
-                    var success = false;
-                    var id = match.Groups[5].Value;
-                    if (string.IsNullOrEmpty(id))
-                    {
-                        var badMessage = await Discord.SendMessageAsync(e.Channel,
-                            "Bad Recommendation, could not find video ID");
-                        await Task.Delay(5000);
-                        await badMessage.DeleteAsync();
-                        shouldDeleteMessage = true;
-                        goto deleteMessage;
-                    }
-
-                    var playlistId = "";
-                    try
-                    {
-                        playlistId = await Database.Instance.GetPlaylistId(Database.TableName, e.Guild.Id);
-                        success = !string.IsNullOrWhiteSpace(playlistId);
-                    }
-                    catch (InvalidCastException)
-                    {
-                        //No playlist_id in row, expected
-                    }
-                    catch (Exception exception)
-                    {
-                        Debugger.Break();
-                        await Console.Error.WriteLineAsync("Non-Raised Error");
-                        await Console.Error.WriteLineAsync(exception.ToString());
-                    }
-
-                    var usedPlaylistId = await YoutubeAPIs.Instance.AddToPlaylist(id, playlistId,
-                        $"{e.Guild.Name} Music Recommendation Playlist");
-                    switch (usedPlaylistId)
-                    {
-                        case "existing":
-                            var badMessage =
-                                await Discord.SendMessageAsync(e.Channel, "Video already in playlist");
-                            await Task.Delay(5000);
-                            await badMessage.DeleteAsync();
-                            shouldDeleteMessage = true;
-                            break;
-                        default:
-                            await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation");
-                            if (usedPlaylistId != playlistId)
-                                await Database.Instance.ChangePlaylistId(Database.TableName, e.Guild.Id,
-                                    e.Channel.Id, usedPlaylistId);
-
-                            Console.WriteLine(
-                                await Database.Instance.GetChannelId(Database.TableName, e.Guild.Id));
-                            break;
-                    }
-                }
-                else
-                {
-                    if (removeNonUrls)
-                    {
-                        await e.Message.DeleteAsync();
-                        var badMessage = await Discord.SendMessageAsync(e.Channel,
-                            $"Bad Recommendation, does not match ```regex\n{iShouldJustCopyStackOverflowYoutubeRegex}```");
-                        await Task.Delay(5000);
-                        await badMessage.DeleteAsync();
-                        shouldDeleteMessage = true;
-                    }
-                }
-
-                deleteMessage:
-                if (shouldDeleteMessage) await e.Message.DeleteAsync();
-            }
-        }
-    }
-
     private static async Task Main(string[] args)
     {
         Console.WriteLine("Starting Bot");
-        await Database.Instance.MakeServerTable(Database.TableName);
+        await Database.Instance.MakeServerTables();
+        // await Task.Delay(20_000);
+        var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
+        foreach (var playlistId in allPlaylistIds)
+        {
+            await Database.Instance.MakePlaylistTable(playlistId);
+        }
         await YoutubeAPIs.Instance.Initialize();
-        if (args.Length == 0 || args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true;
+        if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true;
         MainAsync(args).GetAwaiter().GetResult();
     }
 }
