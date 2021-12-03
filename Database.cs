@@ -328,7 +328,7 @@ internal class Database
 	}
 
 	public async Task<int> DeletePlaylistItem(string playlistId, int? id = null, ulong? messageId = null,
-		ulong? userId = null)
+		ulong? userId = null, string? videoId = null)
 	{
 		await using NpgsqlCommand command = new NpgsqlCommand
 		{
@@ -349,13 +349,19 @@ internal class Database
 		{
 			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} message_id = @messageId";
 			command.Parameters.AddWithValue("messageId", NpgsqlDbType.Numeric, (BigInteger)messageId);
+		}
+		if (videoId is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} video_id = @videoId";
+			command.Parameters.AddWithValue("videoId", NpgsqlDbType.Text, videoId);
 		}
 
 		command.CommandText = $"DELETE FROM \"{playlistId}\" {whereString};";
-		int nRows = await command.ExecuteNonQueryAsync();
+		var nRows = await command.ExecuteNonQueryAsync();
 		return nRows;
 	}
-	public async IAsyncEnumerable<PlaylistEntry?> GetPlaylistItems(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null)
+	//TODO: Add selectors for other columns
+	public async IAsyncEnumerable<PlaylistEntry?> GetPlaylistItems(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
 		await using NpgsqlCommand command = new NpgsqlCommand
 		{
@@ -376,6 +382,11 @@ internal class Database
 		{
 			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} message_id = @messageId";
 			command.Parameters.AddWithValue("messageId", NpgsqlDbType.Numeric, (BigInteger)messageId);
+		}
+		if (videoId is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} video_id = @videoId";
+			command.Parameters.AddWithValue("videoId", NpgsqlDbType.Text, videoId);
 		}
 
 		command.CommandText = $"SELECT * FROM \"{playlistId}\" {whereString};";
@@ -389,7 +400,7 @@ internal class Database
 		while (await reader.ReadAsync())
 		{
 			id = reader.GetInt32("id");
-			var videoId = reader.GetString("video_id");
+			videoId = reader.GetString("video_id");
 			var playlistItemId = reader.GetString("playlist_item_id");
 			var tmpValue = reader.GetValue("channel_id");
 			ulong? channelId = tmpValue is null ? null : Convert.ToUInt64(tmpValue); //must use convert here, casting gives a null answer
@@ -404,14 +415,35 @@ internal class Database
 		}
 	}
 
-	public async Task<PlaylistEntry?> GetPlaylistItem(string playlistId, ulong messageId)
+	public async Task<PlaylistEntry?> GetPlaylistItem(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
-		await using NpgsqlCommand command = new NpgsqlCommand
+		await using NpgsqlCommand command = new()
 		{
-			Connection = Connection,
-			CommandText = $"SELECT * FROM \"{playlistId}\" WHERE message_id=@messageId;"
+			Connection = Connection
 		};
-		command.Parameters.AddWithValue("messageId", NpgsqlDbType.Numeric, (BigInteger)messageId);
+		var whereString = "";
+		if (id is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} id = @id";
+			command.Parameters.AddWithValue("id", NpgsqlDbType.Integer, id);
+		}
+		if (userId is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} user_id = @userId";
+			command.Parameters.AddWithValue("userId", NpgsqlDbType.Numeric, (BigInteger)userId);
+		}
+		if (messageId is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} message_id = @messageId";
+			command.Parameters.AddWithValue("messageId", NpgsqlDbType.Numeric, (BigInteger)messageId);
+		}
+		if (videoId is not null)
+		{
+			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} video_id = @videoId";
+			command.Parameters.AddWithValue("videoId", NpgsqlDbType.Text, videoId);
+		}
+
+		command.CommandText = $"SELECT * FROM \"{playlistId}\" {whereString};";
 		await using var reader = command.ExecuteReader(CommandBehavior.SingleRow);
 		if (!reader.HasRows)
 		{
@@ -419,13 +451,13 @@ internal class Database
 		}
 
 		await reader.ReadAsync();
-		var id = reader.GetInt32("id");
-		var videoId = reader.GetString("video_id");
+		id = reader.GetInt32("id");
+		videoId = reader.GetString("video_id");
 		var playlistItemId = reader.GetString("playlist_item_id");
 		var tmpValue = reader.GetValue("channel_id");
 		ulong? channelId = tmpValue is null ? null : Convert.ToUInt64(tmpValue); //must use convert here, casting gives a null answer
 		tmpValue = reader.GetValue("user_id");
-		var userId = Convert.ToUInt64(tmpValue); //must use convert here, casting gives a null answer
+		userId = Convert.ToUInt64(tmpValue); //must use convert here, casting gives a null answer
 		var timeSubmitted = reader.GetDateTime("time_submitted");
 		// tmpValue = reader.GetValue("message_id");
 		// messageId = Convert.ToUInt64(tmpValue); //must use convert here, casting gives a null answer

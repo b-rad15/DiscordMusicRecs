@@ -121,7 +121,7 @@ internal class Program
 	    {
 		    return;
 	    }
-	    var playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.Value.playlistId, message.Id);
+	    var playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.Value.playlistId, messageId:message.Id);
 	    if (playlistEntryData is null)
 	    {
 		    return;

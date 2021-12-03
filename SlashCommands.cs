@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text.RegularExpressions;
 using DSharpPlus;
+using DSharpPlus.CommandsNext.Converters;
 using DSharpPlus.Entities;
 using DSharpPlus.Exceptions;
 using DSharpPlus.Interactivity.Enums;
@@ -279,7 +280,11 @@ public class SlashCommands : ApplicationCommandModule
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
             if (bindChannel.IsThread)
             {
-	            await ((DiscordThreadChannel)bindChannel).JoinThreadAsync();
+	            DiscordThreadChannel bindThread = (DiscordThreadChannel) bindChannel;
+	            if (bindThread is not null)
+	            {
+		            await bindThread.JoinThreadAsync();
+	            }
             }
             DiscordWebhookBuilder msg = new();
             if (!string.IsNullOrWhiteSpace(playlistId))
@@ -461,6 +466,11 @@ public class SlashCommands : ApplicationCommandModule
 	                var playlistEntries = await Database.Instance.GetPlaylistItems(rowData.Value.playlistId).ToListAsync();
 	                foreach (var playlistEntry in playlistEntries)
 	                {
+		                if (playlistEntry is null)
+		                {
+			                //No Need to handle if there are no playlist entries, marking isn't important
+                            break;
+		                }
 		                if (playlistEntry?.channelId is null)
 		                {
 			                if (rowData.Value.channelId is null)
@@ -499,61 +509,66 @@ public class SlashCommands : ApplicationCommandModule
         }
 
         [SlashCommand("deletevideo",
-            "Removes given video from the given channel's playlist")]
+	        "Removes given video from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task DeleteVideo(InteractionContext ctx,
-            [Option("PlaylistChannel", "channel that the playlist is bound to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
-            [Option("Video", "The Video to be removed from the playlist")] string videoUrl)
+	        [Option("PlaylistChannel", "channel that the playlist is bound to")]
+	        [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+	        DiscordChannel watchChannel,
+	        [Option("Video", "The Video to be removed from the playlist")]
+	        string videoUrl)
         {
-            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
-            var msg = new DiscordWebhookBuilder();
-            Match? match;
-            if ((match = Program.iShouldJustCopyStackOverflowYoutubeRegex.Match(videoUrl)).Success &&
-                match.Groups[5].Value is not "playlist" or "watch" or "channel" &&
-                !string.IsNullOrWhiteSpace(match.Groups[5].Value))
-            {
-                var id = match.Groups[5].Value;
-                var rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
-                    channelId: watchChannel.Id);
-                if (!rowData.HasValue || rowData.Value.playlistId is null)
-                {
-                    msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");
-                    await ctx.EditResponseAsync(msg);
-                    return;
-                }
+	        await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
+	        var msg = new DiscordWebhookBuilder();
+	        Match? match;
+	        if ((match = Program.iShouldJustCopyStackOverflowYoutubeRegex.Match(videoUrl)).Success &&
+	            match.Groups[5].Value is not "playlist" or "watch" or "channel" &&
+	            !string.IsNullOrWhiteSpace(match.Groups[5].Value))
+	        {
+		        var id = match.Groups[5].Value;
+		        var rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+			        channelId: watchChannel.Id);
+		        if (rowData?.playlistId is null)
+		        {
+			        msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");
+			        await ctx.EditResponseAsync(msg);
+			        return;
+		        }
 
-                try
-                {
-                    var vidsRemoved = await YoutubeAPIs.Instance.RemoveFromPlaylist(rowData.Value.playlistId, id);
-                    if (vidsRemoved > 0)
-                    {
-                        msg.WithContent(
-                            $"Removed {vidsRemoved} videos matching {YoutubeAPIs.IdToVideo(id)} from {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}");
-                        await ctx.EditResponseAsync(msg);
-                        return;
-                    }
+		        try
+		        {
+			        var removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}\n";
+			        await ctx.EditResponseAsync(msg.WithContent(removeString));
 
-                    msg.WithContent(
-                        $"{YoutubeAPIs.IdToVideo(id)} not found in {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}");
-                    await ctx.EditResponseAsync(msg);
-                    return;
-                }
-                catch (Exception e)
-                {
-                    await Console.Error.WriteLineAsync(e.ToString());
-                    Debugger.Break();
-                    msg = new DiscordWebhookBuilder();
-                    msg.WithContent(
-                        $"Error removing  {YoutubeAPIs.IdToVideo(id)} from {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}");
-                    await ctx.EditResponseAsync(msg);
-                    return;
-                }
-            }
+			        var vidToDelete = await Database.Instance.GetPlaylistItem(rowData.Value.playlistId, videoId: id);
+			        if (!vidToDelete.HasValue)
+			        {
+				        msg.WithContent(removeString + "No Videos Found");
+				        await ctx.EditResponseAsync(msg);
+				        return;
+			        }
 
-            msg.WithContent(
-                $"Cannot extract video id, url given does not match `regex\n{Program.iShouldJustCopyStackOverflowYoutubeRegex}`");
-            await ctx.EditResponseAsync(msg);
+			        removeString += await DeleteEntryFromPlaylist(vidToDelete.Value, rowData.Value.playlistId!);
+			        await ctx.EditResponseAsync(msg.WithContent(removeString));
+		        }
+		        catch (Exception e)
+		        {
+			        await Console.Error.WriteLineAsync(e.ToString());
+			        Debugger.Break();
+			        msg = new DiscordWebhookBuilder();
+			        msg.WithContent(
+				        $"Error removing {YoutubeAPIs.IdToVideo(id)} from {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}");
+			        await ctx.EditResponseAsync(msg);
+		        }
+	        }
+	        else
+	        {
+		        msg.WithContent(
+			        $"Cannot extract video id, url given does not match `regex\n{Program.iShouldJustCopyStackOverflowYoutubeRegex}`");
+		        await ctx.EditResponseAsync(msg);
+	        }
         }
+    
 
         [SlashCommand("deleteallfromuser",
             "Removes all videos submitted by mentioned user from the given channel's playlist")]
