@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text.RegularExpressions;
@@ -8,8 +9,10 @@ using DSharpPlus.Entities;
 using DSharpPlus.Exceptions;
 using DSharpPlus.Interactivity.Enums;
 using DSharpPlus.Interactivity.Extensions;
+using DSharpPlus.Net;
 using DSharpPlus.SlashCommands;
 using Google.Apis.YouTube.v3.Data;
+using Newtonsoft.Json;
 using Npgsql;
 
 namespace DiscordMusicRecs;
@@ -85,15 +88,30 @@ public class SlashCommands : ApplicationCommandModule
         var helpString = "**Commands**:\n";
         foreach (var slashCommandGroup in slashCommandGroups)
         {
+	        var prefix = "";
+	        var slashCommandGroupAttributes = slashCommandGroup.GetCustomAttributes().OfType<SlashCommandGroupAttribute>();
+	        var commandGroupAttributes = slashCommandGroupAttributes as SlashCommandGroupAttribute[] ?? slashCommandGroupAttributes.ToArray();
+	        if (commandGroupAttributes.Any())
+	        {
+		        prefix += commandGroupAttributes.First().Name;
+	        }
+
+	        if (!string.IsNullOrWhiteSpace(prefix))
+	        {
+		        prefix += " ";
+	        }
             var methodInfos = slashCommandGroup.GetMethods();
             foreach (var methodInfo in methodInfos)
             {
-                var slashCommandsAttr = methodInfo
+	            var slashCommandsAttr = methodInfo
                     .GetCustomAttributes()
                     .OfType<SlashCommandAttribute>();
-                helpString = slashCommandsAttr.Aggregate(helpString, (current, attribute) => current + $"`/{attribute.Name}`\n{attribute.Description}\n");
+	            foreach (var attribute in slashCommandsAttr) 
+		            helpString = helpString + $"`/{prefix}{attribute.Name}`\n{attribute.Description}\n";
             }
         }
+
+        var noPlaylistsFallback = "\nSend a YouTube link in a recommendation channel after setting up with `/admin addplaylist` to recommend a song";
         try
         {
             var rowsData = await Database.Instance.GetRowsData(Database.MainTableName, serverId: ctx.Guild.Id).ToListAsync();
@@ -103,20 +121,27 @@ public class SlashCommands : ApplicationCommandModule
                 if (!rowData.HasValue) //never be true if more than one entry was added
                 {
                     helpString +=
-                        "send a youtube link in the recommendation channel after setting up with /admin addplaylist to recommend a song";
+                        noPlaylistsFallback;
                 }
                 else
                 {
                     Debug.Assert(rowData.Value.channelId != null, "rowData.Value.channelId != null");
-                    var recsChannel = await Program.Discord.GetChannelAsync(rowData.Value.channelId.Value);
-                    helpString += recsChannel.Mention;
-                    if (rowData.Value.playlistId != null)
+                    DiscordChannel recsChannel;
+                    try
                     {
-                        var playlistUrl = YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId);
-                        helpString += $": <{playlistUrl}>";
+	                    recsChannel = await Program.Discord.GetChannelAsync(rowData.Value.channelId.Value);
+	                    helpString += recsChannel.Mention;
+	                    if (rowData.Value.playlistId != null)
+	                    {
+		                    var playlistUrl = YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId);
+		                    helpString += $": <{playlistUrl}>";
+	                    }
+	                    helpString += '\n';
                     }
-
-                    helpString += '\n';
+                    catch (NotFoundException)
+                    {
+	                    await Program.HandleDeletedChannel(rowData.Value.channelId.Value, rowData: rowData);
+                    }
                 }
             }
                 
@@ -125,11 +150,8 @@ public class SlashCommands : ApplicationCommandModule
         {
             Debugger.Break();
             await Console.Error.WriteLineAsync(exception.ToString());
-            // msg.WithContent(
-            //         baseHelpCommand +
-            //         "send a youtube link in the recommendation channel after setting up with !setchannel to recommend a song");
             helpString +=
-                "send a youtube link in the recommendation channel after setting up with !setchannel to recommend a song";
+                noPlaylistsFallback;
         }
         finally
         {
@@ -140,9 +162,9 @@ public class SlashCommands : ApplicationCommandModule
     }
 
     [SlashCommand("GetRanking",
-        "Get's the users' ranking of this playlist")]
+        "Gets the users' ranking of this playlist")]
     public async Task GetRankedPlaylist(InteractionContext ctx,
-        [Option("PlaylistChannel", "channel to rank results from")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
+        [Option("PlaylistChannel", "Channel to rank results from")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         // await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
         var rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: playlistChannel.Id);
@@ -179,9 +201,9 @@ public class SlashCommands : ApplicationCommandModule
 			, behaviour: PaginationBehaviour.WrapAround, deletion: ButtonPaginationBehavior.DeleteButtons);
     }
 
-    [SlashCommand("randomrec", "gives a random recommendation from the specified channel's playlist")]
+    [SlashCommand("randomrec", "Gives a random recommendation from the specified channel's playlist")]
     public async Task RandomRec(InteractionContext ctx,
-        [Option("PlaylistChannel", "channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
+        [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
         DiscordWebhookBuilder msg = new();
@@ -225,7 +247,7 @@ public class SlashCommands : ApplicationCommandModule
 
     [SlashCommand("recsplaylist", "List the playlist that is bound to the given channel")]
     public async Task GetRecsPlaylist(InteractionContext ctx,
-        [Option("PlaylistChannel", "channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
+        [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
         DiscordWebhookBuilder msg = new();
@@ -269,24 +291,30 @@ public class SlashCommands : ApplicationCommandModule
     public class AdminSlashCommands : ApplicationCommandModule
     {
 
-        [SlashCommand("addplaylist", "Adds channel to watch with a new playlist, to move existing to new channel use `/moveplaylist`")]
+        [SlashCommand("addplaylist", "Adds channel to watch with a new playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task AddPlaylist(InteractionContext ctx,
-            [Option("BindChannel", "channel to bind to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel,
+            [Option("BindChannel", "Channel to bind to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel,
             [Option("PlaylistTitle", "The title of the playlist")] string? playlistTitle = null,
             [Option("PlaylistDescription", "The description of the playlist")] string? playlistDescription = null,
             [Option("PlaylistBase", "The id of the playlist to add songs too, this MUST be a playlist created by the bot")] string? playlistId = null)
         {
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
+            DiscordWebhookBuilder msg = new();
+            if (await Database.Instance.CheckPlaylistChannelExists(Database.MainTableName, channelId: bindChannel.Id))
+            {
+	            msg.WithContent("There is already a playlist bound to this channel, it must be deleted or moved before adding a new one");
+	            await ctx.EditResponseAsync(msg);
+                return;
+            }
             if (bindChannel.IsThread)
             {
-	            DiscordThreadChannel bindThread = (DiscordThreadChannel) bindChannel;
+                DiscordThreadChannel bindThread = (DiscordThreadChannel) await Program.Discord.GetChannelAsync(bindChannel.Id);
 	            if (bindThread is not null)
 	            {
 		            await bindThread.JoinThreadAsync();
 	            }
             }
-            DiscordWebhookBuilder msg = new();
             if (!string.IsNullOrWhiteSpace(playlistId))
             {
                 var validPlaylist = false;
@@ -350,8 +378,8 @@ public class SlashCommands : ApplicationCommandModule
         [SlashCommand("moveplaylist", "Moves existing watch from one channel to another")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task MovePlaylist(InteractionContext ctx,
-            [Option("OriginalChannel", "channel to move the playlist from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel originalChannel,
-            [Option("BindChannel", "channel to bind the playlist to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel)
+            [Option("OriginalChannel", "Channel to move the playlist from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel originalChannel,
+            [Option("BindChannel", "Channel to bind the playlist to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel)
         {
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
             DiscordWebhookBuilder msg = new();
@@ -411,10 +439,10 @@ public class SlashCommands : ApplicationCommandModule
             await ctx.EditResponseAsync(msg);
         }
 
-        [SlashCommand("deleteplaylist", "Remove channel watch&optionally delete playlist, to move existing to new channel use `/moveplaylist`")]
+        [SlashCommand("deleteplaylist", "Remove channel watch&optionally delete playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task DeletePlaylist(InteractionContext ctx,
-            [Option("WatchChannel", "channel to remove watch from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
+            [Option("WatchChannel", "Channel to remove watch from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
             [Option("DeletePlaylist", "Should the playlist be deleted?")] bool shouldDeletePlaylist = true)
         {
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
@@ -432,7 +460,7 @@ public class SlashCommands : ApplicationCommandModule
             var msgResponse = "";
             try
             {
-                if (await Database.Instance.DeleteRow(Database.MainTableName, ctx.Guild.Id, watchChannel.Id))
+                if (await Database.Instance.DeleteRowWithServer(Database.MainTableName, ctx.Guild.Id, watchChannel.Id))
                     msgResponse += $"Successfully removed watch on {watchChannel.Mention}\n";
 
                 if (shouldDeletePlaylist)
@@ -512,16 +540,16 @@ public class SlashCommands : ApplicationCommandModule
 	        "Removes given video from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task DeleteVideo(InteractionContext ctx,
-	        [Option("PlaylistChannel", "channel that the playlist is bound to")]
+	        [Option("PlaylistChannel", "Channel that the playlist is bound to")]
 	        [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
 	        DiscordChannel watchChannel,
-	        [Option("Video", "The Video to be removed from the playlist")]
+	        [Option("Video", "The video to be removed from the playlist")]
 	        string videoUrl)
         {
 	        await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource);
 	        var msg = new DiscordWebhookBuilder();
 	        Match? match;
-	        if ((match = Program.iShouldJustCopyStackOverflowYoutubeRegex.Match(videoUrl)).Success &&
+	        if ((match = Program.IShouldJustCopyStackOverflowYoutubeRegex.Match(videoUrl)).Success &&
 	            match.Groups[5].Value is not "playlist" or "watch" or "channel" &&
 	            !string.IsNullOrWhiteSpace(match.Groups[5].Value))
 	        {
@@ -564,7 +592,7 @@ public class SlashCommands : ApplicationCommandModule
 	        else
 	        {
 		        msg.WithContent(
-			        $"Cannot extract video id, url given does not match `regex\n{Program.iShouldJustCopyStackOverflowYoutubeRegex}`");
+			        $"Cannot extract video id, url given does not match `regex\n{Program.IShouldJustCopyStackOverflowYoutubeRegex}`");
 		        await ctx.EditResponseAsync(msg);
 	        }
         }
@@ -574,7 +602,7 @@ public class SlashCommands : ApplicationCommandModule
             "Removes all videos submitted by mentioned user from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public async Task DeleteAllFromUser(InteractionContext ctx,
-            [Option("PlaylistChannel", "channel that the playlist is bound to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
+            [Option("PlaylistChannel", "Channel that the playlist is bound to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
             [Option("User", "The user to delete all from")] DiscordUser badUser,
 	        [Option("DeleteSubmissionMessages", "Delete User's Messages? If not, submissions will only be deleted from the playlist, not the channel")] bool deleteMessage = true)
         {

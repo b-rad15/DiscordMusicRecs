@@ -27,13 +27,14 @@ internal class Program
     // https://youtu.be/vPwaXytZcgI
     // https://music.youtube.com/watch?v=gzOdfzuFJ3E
     // Message begins with one of the above; optional http(s), www|music and must be watch link or shortlink then followed by any description message
-    private static Regex youtubeRegex =
-        new(@"(http(s?)://(www|music)\.)?(youtube\.com)/watch\?.*?(v=[a-zA-Z0-9_-]+)&?/?.*");
+    // private static Regex youtubeRegex = new(@"(http(s?)://(www|music)\.)?(youtube\.com)/watch\?.*?(v=[a-zA-Z0-9_-]+)&?/?.*", RegexOptions.Compiled);
 
-    private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?");
+    // private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?", RegexOptions.Compiled);
 
-    public static readonly Regex iShouldJustCopyStackOverflowYoutubeRegex = new(
-        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$");
+    public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
+        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
+    public static readonly Regex IShouldJustCopyStackOverflowYoutubeMatchAnywhereInStringRegex = new(
+        @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
 
     private static bool removeNonUrls = false;
     public static DiscordUser? BotOwnerDiscordUser;
@@ -58,8 +59,54 @@ internal class Program
             AckPaginationButtons = true
         });
         slashCommands.RegisterCommands<SlashCommands>();
+        Discord.ChannelDeleted += DiscordOnChannelDeleted;
+        Discord.ThreadDeleted += DiscordOnChannelDeleted;
         await Discord.ConnectAsync();
         await Task.Delay(-1);
+    }
+
+    private static async Task DiscordOnChannelDeleted(DiscordClient sender, DiscordEventArgs e)
+    {
+        switch (e)
+        {
+            case ChannelDeleteEventArgs tmp:
+	            await HandleDeletedChannel(tmp.Channel.Id);
+                break;
+            case ThreadDeleteEventArgs tmp:
+	            await HandleDeletedChannel(tmp.Thread.Id);
+                break;
+            default:
+	            await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?");
+	            return;
+        }
+    }
+
+    public static async Task HandleDeletedChannel(ulong channelId, bool shouldDeletePlaylist = true, Database.MainData? rowData = null)
+    {
+	    rowData ??= await Database.Instance.GetRowData(Database.MainTableName, channelId: channelId);
+	    if (!rowData.HasValue)
+	    {
+		    return;
+	    }
+
+	    var msgResponse = "";
+	    try
+	    {
+		    if (await Database.Instance.DeleteRow(Database.MainTableName, channelId))
+
+		    if (shouldDeletePlaylist)
+		    {
+			    if (rowData.Value.playlistId is not null)
+			    {
+				    var didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.Value.playlistId);
+			    }
+		    }
+	    }
+	    catch (Exception exception)
+	    {
+		    Debugger.Break();
+		    await Console.Error.WriteLineAsync(exception.ToString());
+	    }
     }
 
     private static async Task<int> GetNumberOfReactions(DiscordMessage message, string emojiName)
@@ -163,7 +210,7 @@ internal class Program
                 if (rowData.HasValue)
                 {
                     Match match;
-                    if ((match = iShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
+                    if ((match = IShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
                         match.Groups[5].Value is not "playlist" or "watch" or "channel")
                     {
                         var success = false;
@@ -222,7 +269,7 @@ internal class Program
                         {
                             await e.Message.DeleteAsync();
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-                                $"Bad Recommendation, does not match ```regex\n{iShouldJustCopyStackOverflowYoutubeRegex}```");
+                                $"Bad Recommendation, does not match ```regex\n{IShouldJustCopyStackOverflowYoutubeRegex}```");
                             await Task.Delay(5000);
                             await badMessage.DeleteAsync();
                             shouldDeleteMessage = true;

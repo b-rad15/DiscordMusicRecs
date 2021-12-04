@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Linq;
 using System.Net.Http.Headers;
@@ -220,6 +221,57 @@ internal class Database
         return nRows;
     }
 
+    public async Task<bool> CheckPlaylistChannelExists(string tableName, int? id = null, ulong? serverId = null,
+	    ulong? channelId = null, string? playlistId = null)
+    {
+	    if (id is null && serverId is null && channelId is null && playlistId is null)
+	    {
+		    throw new Exception("At least one of id, serverId, channelId, or playlistId");
+	    }
+
+	    await using NpgsqlCommand command = new()
+	    {
+		    Connection = Connection,
+	    };
+	    var whereString = "";
+	    if (id is not null)
+	    {
+		    whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} id = @id";
+		    command.Parameters.AddWithValue("id", NpgsqlDbType.Integer, id);
+	    }
+
+	    if (channelId is not null)
+	    {
+		    whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} channel_id = @channelId";
+		    command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
+	    }
+
+	    if (serverId is not null)
+	    {
+		    whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} server_id = @serverId";
+		    command.Parameters.AddWithValue("serverId", NpgsqlDbType.Numeric, (BigInteger)serverId);
+	    }
+
+	    if (playlistId is not null)
+	    {
+		    whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} playlist_id = @playlistId";
+		    command.Parameters.AddWithValue("playlistId", NpgsqlDbType.Numeric, playlistId);
+	    }
+
+	    command.CommandText = $"SELECT channel_id FROM {tableName} {whereString};";
+	    Debug.WriteLine(command.CommandText);
+	    try
+		{
+			var data = await command.ExecuteScalarAsync();
+			return data is not null;
+		}
+	    catch (DbException)
+	    {
+		    return false;
+	    }
+
+    }
+
     public async Task<MainData?> GetRowData(string tableName, 
         int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
     {
@@ -303,9 +355,8 @@ internal class Database
 			whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} playlist_id = @playlistId";
 			command.Parameters.AddWithValue("playlistId", NpgsqlDbType.Numeric, playlistId);
 		}
-
-		whereString = " WHERE" + whereString;
-		command.CommandText = $"SELECT * FROM {tableName}{whereString};";
+		
+		command.CommandText = $"SELECT * FROM {tableName} {whereString};";
 		Debug.WriteLine(command.CommandText);
 		await using var reader = await command.ExecuteReaderAsync();
 		if (!reader.HasRows)
@@ -361,6 +412,7 @@ internal class Database
 		return nRows;
 	}
 	//TODO: Add selectors for other columns
+	//TODO: Replace returning null item with returning none and checking with .Any()
 	public async IAsyncEnumerable<PlaylistEntry?> GetPlaylistItems(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
 		await using NpgsqlCommand command = new NpgsqlCommand
@@ -466,12 +518,24 @@ internal class Database
 		return new PlaylistEntry(id, videoId, playlistItemId, channelId, userId, timeSubmitted, messageId, upvotes, downvotes);
 	}
 
-	public async Task<bool> DeleteRow(string tableName, ulong serverId, ulong channelId)
+	//Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel
+	public async Task<bool> DeleteRowWithServer(string tableName, ulong serverId, ulong channelId)
     {
         await using NpgsqlCommand command = new(){Connection = Connection};
         string deleteCommand = $"DELETE FROM {tableName} WHERE server_id = @serverId AND channel_id = @channelId;";
         command.CommandText = deleteCommand;
         command.Parameters.AddWithValue("serverId", NpgsqlDbType.Numeric, (BigInteger)serverId);
+        command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
+        var rowsChanged = await command.ExecuteNonQueryAsync();
+        return rowsChanged > 0;
+    }
+
+	//Insecure version for internal use only, should not be executable by a user. As long as channelIds are unique (and they have to be since the database table column is marked unique) this is reliable
+	public async Task<bool> DeleteRow(string tableName, ulong channelId)
+    {
+        await using NpgsqlCommand command = new(){Connection = Connection};
+        string deleteCommand = $"DELETE FROM {tableName} WHERE channel_id = @channelId;";
+        command.CommandText = deleteCommand;
         command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
         var rowsChanged = await command.ExecuteNonQueryAsync();
         return rowsChanged > 0;
