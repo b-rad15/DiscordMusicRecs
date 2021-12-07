@@ -109,10 +109,11 @@ internal class Database
 				string fallbackConnection =
 					$"Server={Host};Username={User};Database=postgres;Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
 				conn = new NpgsqlConnection(fallbackConnection);
+				conn.Open();
 				NpgsqlCommand makeDbCommand = new()
 				{
 					Connection = conn,
-					CommandText = $"CREATE DATABASE {DBname}"
+					CommandText = $"CREATE DATABASE \"{DBname}\""
 				};
 				makeDbCommand.ExecuteNonQuery();
 				goto startConstructor;
