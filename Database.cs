@@ -84,7 +84,33 @@ internal class Database
 
     private NpgsqlConnection GetConnection()
 	{
-		var conn = new NpgsqlConnection(connectionString);
+		NpgsqlConnection conn;
+	startConstructor:
+		try
+		{
+
+			conn = new NpgsqlConnection(connectionString);
+		}
+		catch (PostgresException e)
+		{
+			if (e.MessageText.Contains($"database \"{DBname}\" does not exist"))
+			{
+				string fallbackConnection =
+					$"Server={Host};Username={User};Database=postgres;Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
+				conn = new NpgsqlConnection(fallbackConnection);
+				NpgsqlCommand makeDbCommand = new()
+				{
+					Connection = conn,
+					CommandText = $"CREATE DATABASE {DBname}"
+				};
+				makeDbCommand.ExecuteNonQuery();
+				goto startConstructor;
+			}
+			else
+			{
+				throw;
+			}
+		}
 		conn.StateChange += async (sender, args) =>
 		{
 			if (args.CurrentState is ConnectionState.Closed or ConnectionState.Broken)
