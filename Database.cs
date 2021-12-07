@@ -90,6 +90,17 @@ internal class Database
 		{
 
 			conn = new NpgsqlConnection(connectionString);
+			conn.StateChange += async (sender, args) =>
+			{
+				if (args.CurrentState is ConnectionState.Closed or ConnectionState.Broken)
+				{
+					await conn.OpenAsync();
+				}
+			};
+
+
+			Console.Out.WriteLine("Opening connection");
+			conn.Open();
 		}
 		catch (PostgresException e)
 		{
@@ -111,17 +122,6 @@ internal class Database
 				throw;
 			}
 		}
-		conn.StateChange += async (sender, args) =>
-		{
-			if (args.CurrentState is ConnectionState.Closed or ConnectionState.Broken)
-			{
-				await conn.OpenAsync();
-            }
-		};
-
-
-		Console.Out.WriteLine("Opening connection");
-		conn.Open();
 		return conn;
 	}
 
