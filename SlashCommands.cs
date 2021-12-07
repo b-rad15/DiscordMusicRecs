@@ -53,7 +53,7 @@ public class RequireBotAdminPrivilegeAttribute : SlashCheckBaseAttribute
 
 public class SlashCommands : ApplicationCommandModule
 {
-    private static readonly Regex iReallyHopeThisPullsPlaylistIdsRegex = new(
+    private static readonly Regex IReallyHopeThisPullsPlaylistIdsRegex = new(
         @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com))(\/(?:[\w\-]+\?list=|embed\/|list\/)?)([\w\-]+)(\S+)?$");
 
     public static bool IsTextChannel(DiscordChannel channel)
@@ -319,7 +319,7 @@ public class SlashCommands : ApplicationCommandModule
             {
                 var validPlaylist = false;
                 Match? playlistMatch;
-                if ((playlistMatch = iReallyHopeThisPullsPlaylistIdsRegex.Match(playlistId)).Success)
+                if ((playlistMatch = IReallyHopeThisPullsPlaylistIdsRegex.Match(playlistId)).Success)
                     playlistId = playlistMatch.Groups[5].Value;
 
                 await foreach (var channelPlaylistId in YoutubeAPIs.Instance.GetMyPlaylistIds())
@@ -692,9 +692,10 @@ public class SlashCommands : ApplicationCommandModule
 	                    await MarkNoVoting(entry.channelId!.Value, entry.messageId!.Value);
 	                    removeString += $"Failed to remove message {entry.messageId}, marked no voting instead\n";
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
-	                    removeString += $"Failed to remove message {entry.messageId} and couldn't react to indicate voting disallowed\n";
+	                    Debugger.Break();
+                        removeString += $"Failed to remove message {entry.messageId} and couldn't react to indicate voting disallowed\n";
                     }
 			    }
 		    }
