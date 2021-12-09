@@ -287,11 +287,11 @@ internal class Program
         Console.WriteLine("Starting Bot");
         await Database.Instance.MakeServerTables();
         // await Task.Delay(20_000);
-        var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
-        foreach (var playlistId in allPlaylistIds)
-        {
-            await Database.Instance.MakePlaylistTable(playlistId);
-        }
+        // var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
+        // foreach (var playlistId in allPlaylistIds)
+        // {
+        //     await Database.Instance.MakePlaylistTable(playlistId);
+        // }
         await YoutubeAPIs.Instance.Initialize();
         if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true;
         MainAsync(args).GetAwaiter().GetResult();

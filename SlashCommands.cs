@@ -618,7 +618,7 @@ public class SlashCommands : ApplicationCommandModule
             var removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.Value.playlistId)}\n";
             await ctx.EditResponseAsync(msg.WithContent(removeString));
 
-            var vidsToDelete = await Database.Instance.GetPlaylistItems(rowData.Value.playlistId, userId:badUser.Id).ToListAsync();
+            var vidsToDelete = await Database.Instance.GetPlaylistItems(rowData.Value.playlistId, userId: badUser.Id).ToListAsync();
             foreach (var vidToDelete in vidsToDelete)
             {
                 if (!vidToDelete.HasValue)
@@ -674,7 +674,7 @@ public class SlashCommands : ApplicationCommandModule
 
 		    }
 
-		    var rowsDeleted = Database.Instance.DeletePlaylistItem(playlistId, entry.id);
+		    var rowsDeleted = Database.Instance.DeletePlaylistItem(playlistId);
 		    if (removeMessage)
 		    {
 			    try
