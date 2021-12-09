@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
@@ -11,6 +13,8 @@ using System.Text;
 using System.Threading.Tasks;
 using DSharpPlus.Entities;
 using Google.Apis.YouTube.v3.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -31,7 +35,126 @@ internal class Database
 	private NpgsqlConnection Connection;
 	private string connectionString;
 
-    public readonly struct MainData
+	private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
+
+	public class VideoData
+	{
+		[Required]
+		public string VideoId { get; set; } = null!;
+		[Required]
+		public string PlaylistItemId { get; set; } = null!;
+		public ulong? ChannelId { get; set; }
+		[Required]
+		public ulong UserId { get; set; }
+		[Required]
+		public DateTime TimeSubmitted { get; set; }
+		[Required]
+		[Key]
+		public ulong MessageId { get; set; }
+		[Required]
+		public short Upvotes { get; set; }
+		[Required]
+		public short Downvotes { get; set; }
+		//Relation
+		public string PlaylistId { get; set; } = null!;
+		public PlaylistData Playlist { get; set; } = null!;
+	}
+	public class PlaylistData
+	{
+		public ulong ServerId { get; set; }
+		public ulong? ChannelId { get; set; }
+		public bool IsConnectedToChannel { get; set; }
+		public DateTime TimeCreated { get; set; }
+		[Required]
+		[Key]
+		public string PlaylistId { get; set; } = null!;
+		//Relation
+		public List<VideoData> Videos { get; set; } = null!;
+	}
+	public class DiscordDatabaseContext : DbContext
+	{
+		public DbSet<VideoData> VideosSubmitted { get; set; } = null!;
+		public DbSet<PlaylistData> PlaylistsAdded { get; set; } = null!;
+
+		protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+			optionsBuilder
+				.UseNpgsql(
+					BaseConnectionString,
+					options => options
+						.EnableRetryOnFailure()
+						.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)
+						.UseAdminDatabase("postgtres"))
+				.UseSnakeCaseNamingConvention();
+		#region Required
+		protected override void OnModelCreating(ModelBuilder modelBuilder)
+		{
+			modelBuilder.ApplyConfigurationsFromAssembly(typeof(PlaylistDataEntityTypeConfiguration).Assembly);
+			modelBuilder.ApplyConfigurationsFromAssembly(typeof(VideoDataEntityTypeConfiguration).Assembly);
+		}
+		#endregion
+	}
+	public class VideoDataEntityTypeConfiguration : IEntityTypeConfiguration<VideoData>
+	{
+		public void Configure(EntityTypeBuilder<VideoData> builder)
+		{
+			builder
+				.Property(vd => vd.VideoId)
+				.IsRequired();
+			builder
+				.Property(vd => vd.UserId)
+				.IsRequired();
+			builder
+				.Property(vd => vd.TimeSubmitted)
+				.IsRequired()
+				.HasDefaultValueSql("CURRENT_TIMESTAMP");
+			builder
+				.Property(vd => vd.MessageId)
+				.IsRequired();
+			builder
+				.HasIndex(vd => vd.MessageId)
+				.IsUnique()
+				.IncludeProperties(vd =>  new { timeSubmitted = vd.TimeSubmitted, upvotes = vd.Upvotes, downvotes = vd.Downvotes});
+			builder
+				.Property(vd => vd.Upvotes)
+				.IsRequired()
+				.HasDefaultValue(0);
+			builder
+				.Property(vd => vd.Downvotes)
+				.IsRequired()
+				.HasDefaultValue(0);
+			builder
+				.ToTable(LogTableName);
+		}
+	}
+	public class PlaylistDataEntityTypeConfiguration : IEntityTypeConfiguration<PlaylistData>
+	{
+		public void Configure(EntityTypeBuilder<PlaylistData> builder)
+		{
+			builder
+				.Property(pd => pd.ServerId)
+				.IsRequired();
+			builder
+				.Property(pd => pd.ChannelId)
+				.IsRequired();
+			builder
+				.HasIndex(pd => pd.ChannelId)
+				.IsUnique()
+				.IncludeProperties(pd => pd.PlaylistId);
+			builder
+				.Property(pd => pd.PlaylistId)
+				.IsRequired();
+			builder
+				.Property(pd => pd.IsConnectedToChannel)
+				.HasDefaultValue(false);
+			builder
+				.Property(pd => pd.TimeCreated)
+				.IsRequired()
+				.HasDefaultValueSql("CURRENT_TIMESTAMP");
+			builder
+				.ToTable(MainTableName);
+		}
+	}
+	public readonly struct MainData
     {
         public readonly int? id;
         public readonly ulong? serverId;
@@ -71,6 +194,8 @@ internal class Database
 		    this.downvotes = downvotes;
 	    }
     }
+
+    private DiscordDatabaseContext database;
     private Database()
 	{
 		// Build connection string using parameters from portal
@@ -78,6 +203,8 @@ internal class Database
 		connectionString =
 			$"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
 		Connection = GetConnection();
+		database = new DiscordDatabaseContext();
+
 	}
 
     public static Database Instance { get; } = new();
@@ -94,6 +221,7 @@ internal class Database
 			{
 				if (args.CurrentState is ConnectionState.Closed or ConnectionState.Broken)
 				{
+					// ReSharper disable once AccessToModifiedClosure
 					await conn.OpenAsync();
 				}
 			};
