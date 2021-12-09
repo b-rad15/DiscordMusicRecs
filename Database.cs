@@ -83,7 +83,7 @@ internal class Database
     public static Database Instance { get; } = new();
 
     private NpgsqlConnection GetConnection()
-	{
+	{ 
 		NpgsqlConnection conn;
 	startConstructor:
 		try
@@ -110,12 +110,13 @@ internal class Database
 					$"Server={Host};Username={User};Database=postgres;Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
 				conn = new NpgsqlConnection(fallbackConnection);
 				conn.Open();
-				NpgsqlCommand makeDbCommand = new()
+				using NpgsqlCommand makeDbCommand = new()
 				{
 					Connection = conn,
 					CommandText = $"CREATE DATABASE \"{DBname}\""
 				};
 				makeDbCommand.ExecuteNonQuery();
+				conn.Dispose();
 				goto startConstructor;
 			}
 			else
@@ -408,7 +409,7 @@ internal class Database
 	public async Task<int> DeletePlaylistItem(string playlistId, int? id = null, ulong? messageId = null,
 		ulong? userId = null, string? videoId = null)
 	{
-		await using NpgsqlCommand command = new NpgsqlCommand
+		await using NpgsqlCommand command = new()
 		{
 			Connection = Connection
 		};
@@ -442,7 +443,7 @@ internal class Database
 	//TODO: Replace returning null item with returning none and checking with .Any()
 	public async IAsyncEnumerable<PlaylistEntry?> GetPlaylistItems(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
-		await using NpgsqlCommand command = new NpgsqlCommand
+		await using NpgsqlCommand command = new()
 		{
 			Connection = Connection
 		};
@@ -665,7 +666,7 @@ internal class Database
 		return await command.ExecuteReaderAsync();
 	}
 
-	private void other()
+	private void Other()
 	{
 		using var command1 =
 		       new NpgsqlCommand("CREATE TABLE inventory(id serial PRIMARY KEY, name VARCHAR(50), quantity INTEGER);",

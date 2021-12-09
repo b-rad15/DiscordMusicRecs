@@ -207,7 +207,7 @@ internal class YoutubeAPIs
     {
         if (string.IsNullOrWhiteSpace(playlistId))
         {
-            throw new ArgumentNullException("playlistId is null or whitespace");
+            throw new ArgumentNullException("playlistId");
         }
         var deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync();
         if (!string.IsNullOrWhiteSpace(deleteRequest))

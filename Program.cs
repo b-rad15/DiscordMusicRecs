@@ -21,7 +21,7 @@ internal class Program
     private static Configuration? _config;
 
 
-    public static DiscordClient Discord;
+    public static DiscordClient Discord = null!;
 
     // https://www.youtube.com/watch?v=vPwaXytZcgI
     // https://youtu.be/vPwaXytZcgI
@@ -32,15 +32,15 @@ internal class Program
     // private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?", RegexOptions.Compiled);
 
     public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
-        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
+        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|yout\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
     public static readonly Regex IShouldJustCopyStackOverflowYoutubeMatchAnywhereInStringRegex = new(
-        @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
+        @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
 
     private static bool removeNonUrls = false;
     public static DiscordUser? BotOwnerDiscordUser;
     public static Configuration Config => _config ??= Configuration.ReadConfig();
 
-    public static InteractivityExtension Interactivity;
+    public static InteractivityExtension Interactivity = null!;
     private static async Task MainAsync(string[] args)
     {
         Discord = new DiscordClient(new DiscordConfiguration
@@ -88,17 +88,16 @@ internal class Program
 	    {
 		    return;
 	    }
-
-	    var msgResponse = "";
 	    try
 	    {
 		    if (await Database.Instance.DeleteRow(Database.MainTableName, channelId))
-
-		    if (shouldDeletePlaylist)
 		    {
-			    if (rowData.Value.playlistId is not null)
+			    if (shouldDeletePlaylist)
 			    {
-				    var didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.Value.playlistId);
+				    if (rowData.Value.playlistId is not null)
+				    {
+					    var didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.Value.playlistId);
+				    }
 			    }
 		    }
 	    }
@@ -225,7 +224,7 @@ internal class Program
                             goto deleteMessage;
                         }
 
-                        var playlistId = rowData?.playlistId;
+                        var playlistId = rowData?.playlistId!;
                         success = !string.IsNullOrWhiteSpace(rowData?.playlistId);
 
 
@@ -269,7 +268,7 @@ internal class Program
                         {
                             await e.Message.DeleteAsync();
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-                                $"Bad Recommendation, does not match ```regex\n{IShouldJustCopyStackOverflowYoutubeRegex}```");
+                                $"Bad Recommendation, does not match ```javascript\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```");
                             await Task.Delay(5000);
                             await badMessage.DeleteAsync();
                             shouldDeleteMessage = true;
