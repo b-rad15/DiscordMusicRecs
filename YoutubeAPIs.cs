@@ -172,7 +172,7 @@ internal class YoutubeAPIs
     public async Task<PlaylistItem> GetRandomVideoInPlaylist(string playlistId)
 	{
 		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
-		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count - 1)];
+		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //To is exclusive
 	}
 
 	public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
