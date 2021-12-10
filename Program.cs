@@ -49,7 +49,7 @@ internal class Program
             TokenType = TokenType.Bot,
             Intents = DiscordIntents.AllUnprivileged
         });
-        BotOwnerDiscordUser = await Discord.GetUserAsync(BotOwnerId);
+        BotOwnerDiscordUser = await Discord.GetUserAsync(BotOwnerId).ConfigureAwait(false);
         Discord.MessageCreated += OnDiscordOnMessageCreated;
         Discord.MessageReactionAdded += DiscordOnMessageReactionAdded;
         Discord.MessageReactionRemoved += DiscordOnMessageReactionAdded;
@@ -61,8 +61,8 @@ internal class Program
         slashCommands.RegisterCommands<SlashCommands>();
         Discord.ChannelDeleted += DiscordOnChannelDeleted;
         Discord.ThreadDeleted += DiscordOnChannelDeleted;
-        await Discord.ConnectAsync();
-        await Task.Delay(-1);
+        await Discord.ConnectAsync().ConfigureAwait(false);
+        await Task.Delay(-1).ConfigureAwait(false);
     }
 
     private static async Task DiscordOnChannelDeleted(DiscordClient sender, DiscordEventArgs e)
@@ -70,33 +70,35 @@ internal class Program
         switch (e)
         {
             case ChannelDeleteEventArgs tmp:
-	            await HandleDeletedChannel(tmp.Channel.Id);
+	            await HandleDeletedChannel(tmp.Channel.Id).ConfigureAwait(false);
                 break;
             case ThreadDeleteEventArgs tmp:
-	            await HandleDeletedChannel(tmp.Thread.Id);
+	            await HandleDeletedChannel(tmp.Thread.Id).ConfigureAwait(false);
                 break;
             default:
-	            await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?");
+	            await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?").ConfigureAwait(false);
 	            return;
         }
     }
 
-    public static async Task HandleDeletedChannel(ulong channelId, bool shouldDeletePlaylist = true, Database.MainData? rowData = null)
+    public static async Task HandleDeletedChannel(ulong channelId, bool shouldDeletePlaylist = true, Database.PlaylistData? rowData = null)
     {
-	    rowData ??= await Database.Instance.GetRowData(Database.MainTableName, channelId: channelId);
-	    if (!rowData.HasValue)
+	    rowData ??= await Database.Instance.GetRowData(Database.MainTableName, channelId: channelId).ConfigureAwait(false);
+	    if (rowData is null)
 	    {
+            //No Row Exists for given channel, no playlist to delete
 		    return;
 	    }
 	    try
 	    {
-		    if (await Database.Instance.DeleteRow(Database.MainTableName, channelId))
+		    if (await Database.Instance.DeleteRow(Database.MainTableName, channelId).ConfigureAwait(false))
 		    {
 			    if (shouldDeletePlaylist)
-			    {
-				    if (rowData.Value.playlistId is not null)
+			    { 
+				    var didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.PlaylistId).ConfigureAwait(false);
+				    if (didDeletePlaylist)
 				    {
-					    var didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.Value.playlistId);
+					    await Database.Instance.DeleteVideosSubmittedFromPlaylist(rowData.PlaylistId).ConfigureAwait(false);
 				    }
 			    }
 		    }
@@ -104,7 +106,7 @@ internal class Program
 	    catch (Exception exception)
 	    {
 		    Debugger.Break();
-		    await Console.Error.WriteLineAsync(exception.ToString());
+		    await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
 	    }
     }
 
@@ -114,7 +116,7 @@ internal class Program
 
         try
 		{
-			reactions = await message.GetReactionsAsync(DiscordEmoji.FromUnicode(emojiName));
+			reactions = await message.GetReactionsAsync(DiscordEmoji.FromUnicode(emojiName)).ConfigureAwait(false);
 		}
 		catch (NotFoundException)
 		{
@@ -126,26 +128,12 @@ internal class Program
 
     public static readonly DiscordEmoji UpvoteEmoji = DiscordEmoji.FromUnicode("👍");
     public static readonly DiscordEmoji DownvoteEmoji = DiscordEmoji.FromUnicode("👎");
-    private static async Task<(int, int)> CountVotes(DiscordMessage message)
+    private static async Task<(short, short)> CountVotes(DiscordMessage message)
     {
-	    // var reactions = message.Reactions;
-	    // int upvotes = 0;
-	    // int downvotes = 0;
-	    // foreach (var reaction in reactions)
-	    // {
-		   //  if (reaction.Emoji == UpvoteEmoji)
-		   //  {
-			  //   ++upvotes;
-		   //  }
-		   //  else if(reaction.Emoji == DownvoteEmoji)
-		   //  {
-			  //   ++downvotes;
-		   //  }
-	    // }
 
-	    var upvoteOnlycount = await GetNumberOfReactions(message, "👍");
-	    var downvoteOnlycount = await GetNumberOfReactions(message, "👎");
-	    return (upvoteOnlycount, downvoteOnlycount);
+	    var upvoteOnlyCount = await GetNumberOfReactions(message, "👍").ConfigureAwait(false) - 1;
+	    var downvoteOnlyCount = await GetNumberOfReactions(message, "👎").ConfigureAwait(false) - 1;
+	    return (Convert.ToInt16(upvoteOnlyCount), Convert.ToInt16(downvoteOnlyCount));
     }
     private static async Task DiscordOnMessageReactionAdded(DiscordClient sender, DiscordEventArgs e)
     {
@@ -153,34 +141,38 @@ internal class Program
 	    switch (e)
         {
             case MessageReactionAddEventArgs mraea:
+                if(mraea.User == Discord.CurrentUser)
+                    return;
 	            message = mraea.Message;
                 break;
             case MessageReactionRemoveEventArgs mrrea:
-	            message = mrrea.Message;
+	            if (mrrea.User == Discord.CurrentUser)
+		            return;
+                message = mrrea.Message;
                 break;
             default:
-                await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?");
+                await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?").ConfigureAwait(false);
                 return;
         }
-	    var rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: message.ChannelId);
-	    if (rowData?.playlistId is null)
+	    var rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: message.ChannelId).ConfigureAwait(false);
+	    if (rowData?.PlaylistId is null)
 	    {
 		    return;
 	    }
-	    var playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.Value.playlistId, messageId:message.Id);
+	    var playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, messageId:message.Id).ConfigureAwait(false);
 	    if (playlistEntryData is null)
 	    {
 		    return;
 	    }
 
-	    await UpdateVotes(message, rowData.Value.playlistId);
+	    await UpdateVotes(message, rowData.PlaylistId).ConfigureAwait(false);
 
     }
 
     private static async Task UpdateVotes(DiscordMessage message, string playlistId)
     {
-		    var (upvotes, downvotes) = await CountVotes(message);
-		    await Database.Instance.UpdateVotes(messageId: message.Id, playlistId:playlistId, upvotes:upvotes, downvotes:downvotes);
+		    var (upvotes, downvotes) = await CountVotes(message).ConfigureAwait(false);
+		    await Database.Instance.UpdateVotes(messageId: message.Id, playlistId:playlistId, upvotes: upvotes, downvotes: downvotes as short?).ConfigureAwait(false);
     }
 
     private static Task OnDiscordOnMessageCreated(DiscordClient sender, MessageCreateEventArgs e)
@@ -193,20 +185,20 @@ internal class Program
                 //                   $"Server ID: {e.Guild.Id}\n");
                 var shouldDeleteMessage = false;
                 ulong? recsChannelId = null;
-                Database.MainData? rowData = null;
+                Database.PlaylistData? rowData = null;
                 try
                 {
-                    rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: e.Channel.Id);
-                    recsChannelId = rowData?.channelId; //null if rowData is null otherwise channelId
+                    rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: e.Channel.Id).ConfigureAwait(false);
+                    recsChannelId = rowData?.ChannelId; //null if rowData is null otherwise channelId
                 }
                 catch (Exception exception)
                 {
                     Debugger.Break();
-                    await Console.Error.WriteLineAsync(exception.ToString());
+                    await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
                     recsChannelId = null;
                     return;
                 }
-                if (rowData.HasValue)
+                if (rowData is not null)
                 {
                     Match match;
                     if ((match = IShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
@@ -217,47 +209,47 @@ internal class Program
                         if (string.IsNullOrEmpty(id))
                         {
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-                                "Bad Recommendation, could not find video ID");
-                            await Task.Delay(5000);
-                            await badMessage.DeleteAsync();
+	                            "Bad Recommendation, could not find video ID").ConfigureAwait(false);
+                            await Task.Delay(5000).ConfigureAwait(false);
+                            await badMessage.DeleteAsync().ConfigureAwait(false);
                             shouldDeleteMessage = true;
                             goto deleteMessage;
                         }
 
-                        var playlistId = rowData?.playlistId!;
-                        success = !string.IsNullOrWhiteSpace(rowData?.playlistId);
+                        var playlistId = rowData?.PlaylistId!;
+                        success = !string.IsNullOrWhiteSpace(rowData?.PlaylistId);
 
 
                         try
                         {
                             var usedPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, playlistId,
-                                $"{e.Guild.Name} Music Recommendation Playlist");
-                            await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation");
-                            await e.Message.CreateReactionAsync(UpvoteEmoji);
-                            await e.Message.CreateReactionAsync(DownvoteEmoji);
+	                            $"{e.Guild.Name} Music Recommendation Playlist").ConfigureAwait(false);
+                            await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation").ConfigureAwait(false);
+                            await e.Message.CreateReactionAsync(UpvoteEmoji).ConfigureAwait(false);
+                            await e.Message.CreateReactionAsync(DownvoteEmoji).ConfigureAwait(false);
                             if (usedPlaylistItem.Snippet.PlaylistId != playlistId)
                             {
                                 await Database.Instance.ChangePlaylistId(Database.MainTableName, e.Guild.Id,
-                                    e.Channel.Id, usedPlaylistItem.Snippet.PlaylistId);
-                                await Database.Instance.MakePlaylistTable(usedPlaylistItem.Snippet.PlaylistId);
+	                                e.Channel.Id, usedPlaylistItem.Snippet.PlaylistId, playlistId).ConfigureAwait(false);
+                                // await Database.Instance.MakePlaylistTable(usedPlaylistItem.Snippet.PlaylistId).ConfigureAwait(false);
                             }
 
                             await Database.Instance.AddVideoToPlaylistTable(usedPlaylistItem.Snippet.PlaylistId, id, usedPlaylistItem.Id, e.Channel.Id, e.Author.Id,
-                                e.Message.Timestamp, e.Message.Id);
+	                            e.Message.Timestamp, e.Message.Id).ConfigureAwait(false);
                         }
                         catch (Exception exception)
                         {
                             if (exception.Message == "Video already exists in playlist")
                             {
                                 var badMessage =
-                                    await Discord.SendMessageAsync(e.Channel, "Video already in playlist");
-                                await Task.Delay(5000);
-                                await badMessage.DeleteAsync();
+                                    await Discord.SendMessageAsync(e.Channel, "Video already in playlist").ConfigureAwait(false);
+                                await Task.Delay(5000).ConfigureAwait(false);
+                                await badMessage.DeleteAsync().ConfigureAwait(false);
                                 shouldDeleteMessage = true;
                             }
                             else
                             {
-                                await Console.Error.WriteLineAsync(exception.ToString());
+                                await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
                                 throw;
                             }
                         }
@@ -266,17 +258,17 @@ internal class Program
                     {
                         if (removeNonUrls)
                         {
-                            await e.Message.DeleteAsync();
+                            await e.Message.DeleteAsync().ConfigureAwait(false);
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-                                $"Bad Recommendation, does not match ```javascript\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```");
-                            await Task.Delay(5000);
-                            await badMessage.DeleteAsync();
+	                            $"Bad Recommendation, does not match ```javascript\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```").ConfigureAwait(false);
+                            await Task.Delay(5000).ConfigureAwait(false);
+                            await badMessage.DeleteAsync().ConfigureAwait(false);
                             shouldDeleteMessage = true;
                         }
                     }
 
                     deleteMessage:
-                    if (shouldDeleteMessage) await e.Message.DeleteAsync();
+                    if (shouldDeleteMessage) await e.Message.DeleteAsync().ConfigureAwait(false);
                 }
             });
         return Task.CompletedTask;
@@ -285,14 +277,15 @@ internal class Program
     private static async Task Main(string[] args)
     {
         Console.WriteLine("Starting Bot");
-        await Database.Instance.MakeServerTables();
+        // await Database.Instance.MakeServerTables().ConfigureAwait(false);
+        await Database.Instance.MakeServerTables().ConfigureAwait(false);
         // await Task.Delay(20_000);
         // var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
         // foreach (var playlistId in allPlaylistIds)
         // {
         //     await Database.Instance.MakePlaylistTable(playlistId);
         // }
-        await YoutubeAPIs.Instance.Initialize();
+        await YoutubeAPIs.Instance.Initialize().ConfigureAwait(false);
         if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true;
         MainAsync(args).GetAwaiter().GetResult();
     }

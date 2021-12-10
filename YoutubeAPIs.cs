@@ -30,22 +30,23 @@ internal class YoutubeAPIs
 	public async Task Initialize()
 	{
 		UserCredential credential;
-		await using (var stream = new FileStream("client_secret_youtube.json", FileMode.Open, FileAccess.Read))
+		var stream = new FileStream("client_secret_youtube.json", FileMode.Open, FileAccess.Read);
+		await using (stream.ConfigureAwait(false))
 		{
-			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream)).Secrets,
+			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream).ConfigureAwait(false)).Secrets,
 				// This OAuth 2.0 access scope allows for full read/write access to the
 				// authenticated user's account.
 				new[] { YouTubeService.Scope.Youtube},
 				"user",
 				CancellationToken.None,
 				new FileDataStore(GetType().ToString())
-			);
+			).ConfigureAwait(false);
 		}
 
 		youTubeService = new YouTubeService(new BaseClientService.Initializer()
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = GetType().ToString() + Dns.GetHostName()
+			ApplicationName = GetType().ToString() + Dns.GetHostName() + Program.Config.PostgresConfig.DbName
 		});
 		initialized = true;
 	}
@@ -70,17 +71,17 @@ internal class YoutubeAPIs
             string playlistDescription = "")
 	{
 		if (!initialized)
-			await this.Initialize();
+			await this.Initialize().ConfigureAwait(false);
 		MakeNewPlaylist:
 		// Create a new, private playlist in the authorized user's channel.
 		if (string.IsNullOrWhiteSpace(playlistId))
 		{
 			Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-			playlistId = await NewPlaylist(playlistName, playlistDescription);
+			playlistId = await NewPlaylist(playlistName, playlistDescription).ConfigureAwait(false);
 		}
 		else
 		{
-			await foreach (var existingVideoId in GetVideoIdsInPlaylist(playlistId))
+			await foreach (var existingVideoId in GetVideoIdsInPlaylist(playlistId).ConfigureAwait(false))
 			{
 				if (existingVideoId == videoID)
                 {
@@ -105,7 +106,7 @@ internal class YoutubeAPIs
 		};
 		try
 		{
-			videoToAdd = await youTubeService.PlaylistItems.Insert(videoToAdd, "snippet").ExecuteAsync();
+			videoToAdd = await youTubeService.PlaylistItems.Insert(videoToAdd, "snippet").ExecuteAsync().ConfigureAwait(false);
 		}
 		catch (Google.GoogleApiException e)
 		{
@@ -120,10 +121,11 @@ internal class YoutubeAPIs
 			$"Playlist item id {videoToAdd.Id} (video ID {videoID}) was added to playlist id {videoToAdd.Snippet.PlaylistId} @ url https://www.youtube.com/playlist?list={videoToAdd.Snippet.PlaylistId}");
 		return videoToAdd;
 	}
+    //TODO: Get Playlist Items from database to save on API calls
      private async IAsyncEnumerable<PlaylistItem> GetPlaylistItemsInPlaylist(string playlistId)
      {
 	     if (!initialized)
-             await this.Initialize();
+             await this.Initialize().ConfigureAwait(false);
          var pagingToken = "";
          while (pagingToken is not null)
          {
@@ -132,7 +134,7 @@ internal class YoutubeAPIs
              playlistItemsRequest.PlaylistId = playlistId;
              playlistItemsRequest.MaxResults = 100;
              playlistItemsRequest.PageToken = pagingToken;
-             var playlistItems = await playlistItemsRequest.ExecuteAsync();
+             var playlistItems = await playlistItemsRequest.ExecuteAsync().ConfigureAwait(false);
              foreach (var playlistItem in playlistItems.Items)
              {
                  yield return playlistItem;
@@ -146,7 +148,7 @@ internal class YoutubeAPIs
     public async IAsyncEnumerable<Playlist> GetMyPlaylists()
     {
         if (!initialized)
-            await this.Initialize();
+            await this.Initialize().ConfigureAwait(false);
         var pagingToken = "";
         while (pagingToken is not null)
         {
@@ -155,7 +157,7 @@ internal class YoutubeAPIs
             playlistsRequest.Mine = true;
             playlistsRequest.MaxResults = 100;
             playlistsRequest.PageToken = pagingToken;
-            var playlistItems = await playlistsRequest.ExecuteAsync();
+            var playlistItems = await playlistsRequest.ExecuteAsync().ConfigureAwait(false);
             foreach (var playlistItem in playlistItems.Items)
             {
                 yield return playlistItem;
@@ -169,7 +171,7 @@ internal class YoutubeAPIs
 
     public async Task<PlaylistItem> GetRandomVideoInPlaylist(string playlistId)
 	{
-		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync();
+		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
 		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count - 1)];
 	}
 
@@ -191,12 +193,12 @@ internal class YoutubeAPIs
         {
             Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
             recommendationPlaylist =
-				await youTubeService.Playlists.Insert(recommendationPlaylist, "snippet,status").ExecuteAsync();
+				await youTubeService.Playlists.Insert(recommendationPlaylist, "snippet,status").ExecuteAsync().ConfigureAwait(false);
         }
 		catch (Google.GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[youtubeSignupRequired]"))
-				await Console.Error.WriteLineAsync("Must Sign up used google account for youtube channel");
+				await Console.Error.WriteLineAsync("Must Sign up used google account for youtube channel").ConfigureAwait(false);
 			throw;
 		}
 
@@ -209,7 +211,7 @@ internal class YoutubeAPIs
         {
             throw new ArgumentNullException("playlistId");
         }
-        var deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync();
+        var deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
         {
 			Console.WriteLine($"Delete Request returned ${deleteRequest}");
@@ -230,13 +232,13 @@ internal class YoutubeAPIs
         }
 
         var vidsRemoved = 0;
-        await foreach (var playlist in GetMyPlaylists())
+        await foreach (var playlist in GetMyPlaylists().ConfigureAwait(false))
         {
             if (playlist.Id != playlistId) continue;
             var videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
-            await foreach (var videoToRemove in videosToRemove)
+            await foreach (var videoToRemove in videosToRemove.ConfigureAwait(false))
             {
-                var deleteVideooResponse = await youTubeService.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync();
+                var deleteVideooResponse = await youTubeService.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(deleteVideooResponse))
                 {
                     Console.WriteLine($"Delete Request returned ${deleteVideooResponse}");

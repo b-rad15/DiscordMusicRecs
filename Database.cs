@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Npgsql;
 using NpgsqlTypes;
+using Z.EntityFramework.Plus;
 
 namespace DiscordMusicRecs;
 
@@ -32,10 +33,10 @@ internal class Database
     public static string MainTableName = Program.Config.PostgresConfig.MainTableName; //Name of main table, for server channel watches
     public static string LogTableName = Program.Config.PostgresConfig.LogTableName; //Name of main table, for server channel watches
 
-	private NpgsqlConnection Connection;
-	private string connectionString;
+    private NpgsqlConnection Connection = null!;
 
-	private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
+    // Build connection string using parameters from portal
+    private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
 
 	public class VideoData
 	{
@@ -73,6 +74,9 @@ internal class Database
 	}
 	public class DiscordDatabaseContext : DbContext
 	{
+		//TODO: Enable AutoHistory https://github.com/Arch/AutoHistory
+		//TODO: Consider NeinLinq https://nein.tech/nein-linq/
+		//TODO:
 		public DbSet<VideoData> VideosSubmitted { get; set; } = null!;
 		public DbSet<PlaylistData> PlaylistsAdded { get; set; } = null!;
 
@@ -83,7 +87,7 @@ internal class Database
 					options => options
 						.EnableRetryOnFailure()
 						.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)
-						.UseAdminDatabase("postgtres"))
+						.UseAdminDatabase("postgres"))
 				.UseSnakeCaseNamingConvention();
 		#region Required
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -106,7 +110,8 @@ internal class Database
 			builder
 				.Property(vd => vd.TimeSubmitted)
 				.IsRequired()
-				.HasDefaultValueSql("CURRENT_TIMESTAMP");
+				.HasDefaultValueSql("CURRENT_TIMESTAMP")
+				.HasColumnType("timestamp"); ;
 			builder
 				.Property(vd => vd.MessageId)
 				.IsRequired();
@@ -149,7 +154,8 @@ internal class Database
 			builder
 				.Property(pd => pd.TimeCreated)
 				.IsRequired()
-				.HasDefaultValueSql("CURRENT_TIMESTAMP");
+				.HasDefaultValueSql("CURRENT_TIMESTAMP")
+				.HasColumnType("timestamp");
 			builder
 				.ToTable(MainTableName);
 		}
@@ -195,34 +201,30 @@ internal class Database
 	    }
     }
 
-    private DiscordDatabaseContext database;
+    private readonly DiscordDatabaseContext database;
     private Database()
 	{
-		// Build connection string using parameters from portal
-		//
-		connectionString =
-			$"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
-		Connection = GetConnection();
 		database = new DiscordDatabaseContext();
 
 	}
 
     public static Database Instance { get; } = new();
 
-    private NpgsqlConnection GetConnection()
+    [Obsolete("Uses old database format", true)]
+	private NpgsqlConnection GetConnection()
 	{
 		NpgsqlConnection conn;
 	startConstructor:
 		try
 		{
 
-			conn = new NpgsqlConnection(connectionString);
+			conn = new NpgsqlConnection(BaseConnectionString);
 			conn.StateChange += async (sender, args) =>
 			{
 				if (args.CurrentState is ConnectionState.Closed or ConnectionState.Broken)
 				{
 					// ReSharper disable once AccessToModifiedClosure
-					await conn.OpenAsync();
+					await conn.OpenAsync().ConfigureAwait(false);
 				}
 			};
 
@@ -257,28 +259,20 @@ internal class Database
 
 	public async Task MakeServerTables()
 	{
-		await ExecuteNonQuery($"CREATE TABLE IF NOT EXISTS {MainTableName}(id serial PRIMARY KEY,server_id NUMERIC(20,0), channel_id NUMERIC(20,0) UNIQUE,playlist_id TEXT);");
+		await database.Database.MigrateAsync().ConfigureAwait(false);
 	}
 
+	[Obsolete("Uses old database format", true)]
     public async Task<bool> MakePlaylistTable(string playlistId)
     {
         await ExecuteNonQuery(
-            $"CREATE TABLE IF NOT EXISTS \"{playlistId}\" (id SERIAL PRIMARY KEY, video_id TEXT NOT NULL, playlist_item_id TEXT NOT NULL, channel_id NUMERIC(20,0), user_id NUMERIC(20,0) NOT NULL, time_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP, message_id NUMERIC(20,0), upvotes SMALLINT DEFAULT 0, downvotes SMALLINT DEFAULT 0);");
+	        $"CREATE TABLE IF NOT EXISTS \"{playlistId}\" (id SERIAL PRIMARY KEY, video_id TEXT NOT NULL, playlist_item_id TEXT NOT NULL, channel_id NUMERIC(20,0), user_id NUMERIC(20,0) NOT NULL, time_submitted TIMESTAMP DEFAULT CURRENT_TIMESTAMP, message_id NUMERIC(20,0), upvotes SMALLINT DEFAULT 0, downvotes SMALLINT DEFAULT 0);").ConfigureAwait(false);
         return true;
     }
-
-    public async IAsyncEnumerable<string> GetAllPlaylistIds(ulong? serverId = null)
-    {
-        await using var command = new NpgsqlCommand
-        {
-            CommandText = $"SELECT playlist_id FROM {MainTableName};",
-            Connection = Connection
-        };
-		await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            yield return reader.GetValue("playlist_id") as string ?? throw new InvalidOperationException("Null playlist_id read from table where playlist_id should be marked as NOT NULL, ensure that playlist_id column is marked NOT NULL");
-        }
+	
+	public async Task<List<string>> GetAllPlaylistIds(ulong? serverId = null)
+	{
+		return await database.PlaylistsAdded.Select(pa => pa.PlaylistId).ToListAsync().ConfigureAwait(false);
     }
 
     public async Task<int> AddVideoToPlaylistTable(string playlistId, string videoId, string playlistItemId, ulong? channelId, ulong userId, DateTimeOffset timeSubmitted, ulong messageId)
@@ -292,20 +286,20 @@ internal class Database
 		    TimeSubmitted = timeSubmitted.DateTime,
 		    MessageId = messageId,
 		    PlaylistId = playlistId
-	    });
-	    var nRows = await database.SaveChangesAsync();
+	    }).ConfigureAwait(false);
+	    var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 	    return nRows;
     }
 
     public async Task<int> UpdateVotes(string? videoId = null, ulong? messageId = null, ulong? channelId = null, string? playlistId = null,
         short? upvotes = null, short? downvotes = null)
     {
-	    var videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync();
+	    var videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
 		if (upvotes is not null)
 			videoItem.Upvotes = upvotes.Value;
 		if(downvotes is not null)
 			videoItem.Downvotes = downvotes.Value;
-		var nRows = await database.SaveChangesAsync();
+		var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 		return nRows;
 		//database.VideosSubmitted.Where(vs => vs.MessageId == messageId && )
         if (messageId is null && videoId is null)
@@ -335,10 +329,11 @@ internal class Database
             throw new ArgumentNullException(nameof(playlistId));
         }
 
-        await using var command = new NpgsqlCommand
+        var command = new NpgsqlCommand
         {
             Connection = Connection
         };
+        await using var _ = command.ConfigureAwait(false);
         var setString = "";
         if (upvotes is not null)
         {
@@ -385,7 +380,7 @@ internal class Database
 	//TODO: Add variable selector
     public async Task<bool> CheckPlaylistChannelExists(string tableName, int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
 	{
-		var videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync();
+		var videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync().ConfigureAwait(false);
 		return videoItem != default(PlaylistData);
 
 		if (id is null && serverId is null && channelId is null && playlistId is null)
@@ -426,7 +421,7 @@ internal class Database
 	    Debug.WriteLine(command.CommandText);
 	    try
 		{
-			var data = await command.ExecuteScalarAsync();
+			var data = await command.ExecuteScalarAsync().ConfigureAwait(false);
 			return data is not null;
 		}
 	    catch (DbException)
@@ -467,11 +462,17 @@ internal class Database
 		try
 		{
 			Debug.Assert(whereQuery != null, nameof(whereQuery) + " != null");
-			var rowData = await whereQuery.FirstAsync();
+			var rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
 			return rowData;
 		}
-		catch (ArgumentNullException)
+		catch (InvalidOperationException)
 		{
+			return null;
+		}
+		catch (Exception)
+		{
+			Debugger.Break();
+			Console.WriteLine("I incorrectly caught a query with no elements");
 			return null;
 		}
 	}
@@ -502,7 +503,7 @@ internal class Database
 				: rowBase.Where(pa => pa.PlaylistId == playlistId);
 		}
 		Debug.Assert(whereQuery != null, nameof(whereQuery) + " != null");
-		var rowData = await whereQuery.ToListAsync();
+		var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
 		return rowData;
 	}
 
@@ -529,17 +530,35 @@ internal class Database
 
 		try
 		{
-			var rowData = await whereQuery.ToListAsync();
+			var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
 			database.RemoveRange(rowData);
-			var nRows = await database.SaveChangesAsync();
+			var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 			return nRows;
 		}
 		catch (Exception e)
 		{
 			Debugger.Break();
-			await Console.Error.WriteLineAsync(e.ToString());
+			await Console.Error.WriteLineAsync(e.ToString()).ConfigureAwait(false);
 			return 0;
 		}
+	}
+
+	public async Task<int> DeletePlaylistData(PlaylistData rowData)
+	{
+		database.Remove(rowData);
+		return await database.SaveChangesAsync().ConfigureAwait(false);
+	}
+
+	public async Task<List<VideoData>> GetRankedPlaylistItems(string playlistId)
+	{
+		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
+		return await whereQuery.ToListAsync().ConfigureAwait(false);
+	}
+
+	//Remove All Videos from given playlist from the videos submitted table
+	public async Task<int> DeleteVideosSubmittedFromPlaylist(string playlistID)
+	{
+		return await database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistID).DeleteAsync().ConfigureAwait(false);
 	}
 	//TODO: Add selectors for other columns
 	//TODO: Replace returning null item with returning none and checking with .Any()
@@ -563,7 +582,7 @@ internal class Database
 			whereQuery = whereQuery.Where(pa => pa.VideoId == videoId);
 		}
 		
-		var rowData = await whereQuery.ToListAsync();
+		var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
 		return rowData;
 	}
 
@@ -586,11 +605,16 @@ internal class Database
 		{
 			whereQuery = whereQuery.Where(pa => pa.VideoId == videoId);
 		}
+
 		try
 		{
 
-			var rowData = await whereQuery.FirstAsync();
+			var rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
 			return rowData;
+		}
+		catch (InvalidOperationException)
+		{
+			return null;
 		}
 		catch (Exception)
 		{
@@ -601,56 +625,45 @@ internal class Database
 
 	//Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel
 	public async Task<bool> DeleteRowWithServer(string tableName, ulong serverId, ulong channelId)
-    {
-        await using NpgsqlCommand command = new(){Connection = Connection};
-        string deleteCommand = $"DELETE FROM {tableName} WHERE server_id = @serverId AND channel_id = @channelId;";
-        command.CommandText = deleteCommand;
-        command.Parameters.AddWithValue("serverId", NpgsqlDbType.Numeric, (BigInteger)serverId);
-        command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
-        var rowsChanged = await command.ExecuteNonQueryAsync();
-        return rowsChanged > 0;
-    }
-
-	//Insecure version for internal use only, should not be executable by a user. As long as channelIds are unique (and they have to be since the database table column is marked unique) this is reliable
-	public async Task<bool> DeleteRow(string tableName, ulong channelId)
-    {
-        await using NpgsqlCommand command = new(){Connection = Connection};
-        string deleteCommand = $"DELETE FROM {tableName} WHERE channel_id = @channelId;";
-        command.CommandText = deleteCommand;
-        command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
-        var rowsChanged = await command.ExecuteNonQueryAsync();
-        return rowsChanged > 0;
-    }
-	public async Task InsertRow(string tableName, ulong serverId, ulong? channelId = null, string? playlistId = null)
 	{
-		var insertCommand = $"INSERT INTO " +
-		                    $"{tableName}(server_id{(channelId is not null ? ", channel_id" : "")} {(string.IsNullOrWhiteSpace(playlistId) ? "" : ", playlist_id")})" +
-		                    $" VALUES(@server_id{(channelId is not null ? ", @channel_id" : "")} {(string.IsNullOrWhiteSpace(playlistId) ? "" : ", @playlist_id")});";
-		await using var cmd = new NpgsqlCommand{CommandText = insertCommand,Connection = Connection};
-		Console.WriteLine(insertCommand);
-		cmd.Parameters.AddWithValue("server_id", NpgsqlDbType.Numeric, (BigInteger)serverId);
-		if (channelId > 0)
-		{
-			cmd.Parameters.AddWithValue("channel_id", NpgsqlDbType.Numeric, (BigInteger)channelId);
-		}
-
-		if (!string.IsNullOrWhiteSpace(playlistId))
-		{
-			cmd.Parameters.AddWithValue("playlist_id", NpgsqlDbType.Text, playlistId);
-		}
-		await cmd.ExecuteNonQueryAsync();
+		var nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false);
+		return nRows > 0;
 	}
-
+	
+	//Insecure version for internal use only, should not be executable by a user. As long as channelIds are unique (and they have to be since the database table column is marked unique) this is reliable
+	//Deletes all rows with given channel Id from the watch list table
+	public async Task<bool> DeleteRow(string tableName, ulong channelId)
+	{
+		return await database.PlaylistsAdded.Where(pa => pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false) > 0;
+    }
+	public async Task InsertRow(string tableName, ulong serverId, string playlistId, ulong? channelId = null, DateTime? timeCreated = null)
+	{
+		var playlistData = new PlaylistData
+		{
+			ChannelId = channelId, 
+			IsConnectedToChannel = channelId is not null, 
+			PlaylistId = playlistId,
+			ServerId = serverId
+		};
+		if (timeCreated is not null)
+			playlistData.TimeCreated = timeCreated.Value;
+		await database.PlaylistsAdded.AddAsync(playlistData).ConfigureAwait(false);
+		await database.SaveChangesAsync().ConfigureAwait(false);
+	}
+	//TODO: Convert to Entity Framework or delete
+	[Obsolete("Uses old database format", true)]
 	public async Task<string> GetPlaylistId(string tableName, ulong channelId)
     {
-        await using var command = new NpgsqlCommand
+	    var command = new NpgsqlCommand
         {
             CommandText = $"SELECT playlist_id FROM {tableName} WHERE channel_id=@channelId;",
 			Connection = Connection,
         };
+        await using var _ = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
-        await using var reader = await command.ExecuteReaderAsync();
-		await reader.ReadAsync();
+        var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        await using var __ = reader.ConfigureAwait(false);
+        await reader.ReadAsync().ConfigureAwait(false);
 		try
 		{
 			return reader.GetString("channel_id");
@@ -661,64 +674,79 @@ internal class Database
 		}
 	}
 
+	//TODO: Convert to Entity Framework or delete
+	[Obsolete("Uses old database format", true)]
 	public async Task<ulong> GetChannelId(string tableName, ulong serverId)
 	{
-		await using var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName} WHERE server_id={serverId};");
-		await reader.ReadAsync();
+		var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName} WHERE server_id={serverId};").ConfigureAwait(false);
+		await using var _ = reader.ConfigureAwait(false);
+		await reader.ReadAsync().ConfigureAwait(false);
 		return (ulong)reader.GetDecimal(0);
 	}
 
+	//TODO: Convert to Entity Framework or delete
+	[Obsolete("Uses old database format", true)]
 	public async IAsyncEnumerable<ulong> GetChannelIds(string tableName, ulong serverId)
 	{
-		await using var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName};");
+		var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName};").ConfigureAwait(false);
+		await using var _ = reader.ConfigureAwait(false);
 		var channelIDs = new List<ulong>();
-		while (await reader.ReadAsync()) yield return (ulong)reader.GetDecimal(1);
+		while (await reader.ReadAsync().ConfigureAwait(false)) yield return (ulong)reader.GetDecimal(1);
 	}
 	
 	public async Task<bool> ChangeChannelId(string tableName, ulong originalChannel, ulong newChannel)
-    {
-        await using var command =
+	{
+		var nRows = await database.PlaylistsAdded.Where(pa => pa.ChannelId == originalChannel)
+			.UpdateAsync(pa => new PlaylistData { ChannelId = newChannel }).ConfigureAwait(false);
+		return nRows > 0;
+		//TODO: Learn how to use update statement with Entity Framework Core (Maybe I did with Entity Framework Plus Library)
+		var command =
             new NpgsqlCommand
             {
-                CommandText = $"UPDATE {tableName} SET channel_id = @newChannel WHERE channel_id = @originalChannel;",
-                Connection = Connection
+                CommandText = $"UPDATE {tableName} SET channel_id = @newChannel WHERE channel_id = @originalChannel;"
             };
+		await using var _ = command.ConfigureAwait(false);
 
 		command.Parameters.AddWithValue("originalChannel", NpgsqlDbType.Numeric, (BigInteger)originalChannel);
 		command.Parameters.AddWithValue("newChannel", NpgsqlDbType.Numeric, (BigInteger)newChannel);
-		var nRows = command.ExecuteNonQuery();
+		// var nRows = command.ExecuteNonQuery();
         return nRows != 0;
     }
-	public async Task ChangePlaylistId(string tableName, ulong serverId, ulong channelId, string playlistId)
+	public async Task ChangePlaylistId(string tableName, ulong serverId, ulong channelId, string newPlaylistId, string oldPlaylistId)
 	{
-		await using var command =
-			new NpgsqlCommand($"UPDATE {tableName} SET playlist_id = @playlist_id WHERE channel_id = @channel_id;",
-				Connection);
-
-		command.Parameters.AddWithValue("playlist_id", NpgsqlDbType.Text, playlistId);
-		command.Parameters.AddWithValue("channel_id", NpgsqlDbType.Numeric, (BigInteger)channelId);
-		var nRows = command.ExecuteNonQuery();
+		var nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId && pa.PlaylistId == oldPlaylistId)
+			.UpdateAsync(pa => new PlaylistData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
 		if (nRows == 0)
 		{
-			await this.InsertRow(tableName, serverId, channelId, playlistId);
+			await this.InsertRow(tableName, serverId, newPlaylistId, channelId: channelId).ConfigureAwait(false);
 			nRows = -1;
 		}
-		await Console.Out.WriteLineAsync($"Number of rows updated={nRows}");
+		else
+		{
+			await database.VideosSubmitted.Where(vs => vs.PlaylistId == oldPlaylistId)
+				.UpdateAsync(vs => new VideoData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
+		}
+		await Console.Out.WriteLineAsync($"Number of rows updated={nRows}").ConfigureAwait(false);
 	}
 
+	[Obsolete("Uses old database format", true)]
 	private async Task ExecuteNonQuery(string commandString)
 	{
-		await using var command = new NpgsqlCommand(commandString, Connection);
-		await command.ExecuteNonQueryAsync();
+		var command = new NpgsqlCommand(commandString, Connection);
+		await using var _ = command.ConfigureAwait(false);
+		await command.ExecuteNonQueryAsync().ConfigureAwait(false);
 	}
 
+	[Obsolete("Uses old database format", true)]
 	private async Task<NpgsqlDataReader> ExecuteQuery(string commandString)
 	{
-		await using var command = new NpgsqlCommand(commandString, Connection);
+		var command = new NpgsqlCommand(commandString, Connection);
+		await using var _ = command.ConfigureAwait(false);
 		Console.WriteLine(commandString);
-		return await command.ExecuteReaderAsync();
+		return await command.ExecuteReaderAsync().ConfigureAwait(false);
 	}
 
+	[Obsolete("Uses old database format", true)]
 	private void Other()
 	{
 		using var command1 =
