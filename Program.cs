@@ -222,7 +222,9 @@ internal class Program
 	                            $"{e.Guild.Name} Music Recommendation Playlist").ConfigureAwait(false);
                             await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation").ConfigureAwait(false);
                             await e.Message.CreateReactionAsync(UpvoteEmoji).ConfigureAwait(false);
+#if EnableDownvote
                             await e.Message.CreateReactionAsync(DownvoteEmoji).ConfigureAwait(false);
+#endif
                             if (usedPlaylistItem.Snippet.PlaylistId != playlistId)
                             {
                                 await Database.Instance.ChangePlaylistId(Database.MainTableName, e.Guild.Id,
