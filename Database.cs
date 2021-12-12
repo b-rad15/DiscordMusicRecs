@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Npgsql;
 using NpgsqlTypes;
+using Serilog;
 using Z.EntityFramework.Plus;
 
 namespace DiscordMusicRecs;
@@ -33,7 +34,7 @@ internal class Database
     public static string MainTableName = Program.Config.PostgresConfig.MainTableName; //Name of main table, for server channel watches
     public static string LogTableName = Program.Config.PostgresConfig.LogTableName; //Name of main table, for server channel watches
 
-    private NpgsqlConnection Connection = null!;
+    private readonly NpgsqlConnection Connection = null!;
 
     // Build connection string using parameters from portal
     private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
@@ -87,8 +88,11 @@ internal class Database
 					options => options
 						.EnableRetryOnFailure()
 						.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)
-						.UseAdminDatabase("postgres"))
-				.UseSnakeCaseNamingConvention();
+						.UseAdminDatabase("postgres")
+						.EnableRetryOnFailure(5))
+				.UseSnakeCaseNamingConvention()
+				.LogTo(Log.Verbose)
+				.EnableSensitiveDataLogging();
 		#region Required
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
 		{
@@ -205,7 +209,6 @@ internal class Database
     private Database()
 	{
 		database = new DiscordDatabaseContext();
-
 	}
 
     public static Database Instance { get; } = new();
@@ -538,7 +541,7 @@ internal class Database
 		catch (Exception e)
 		{
 			Debugger.Break();
-			await Console.Error.WriteLineAsync(e.ToString()).ConfigureAwait(false);
+			Log.Error(e.ToString());
 			return 0;
 		}
 	}
@@ -565,10 +568,10 @@ internal class Database
 	public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
 		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
-		if (messageId is null && userId is null && videoId is null)
-		{
-			throw new Exception("At least one of messageId, userId, or videoId must not be null");
-		}
+		// if (messageId is null && userId is null && videoId is null)
+		// {
+		// 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
+		// }
 		if (messageId is not null)
 		{
 			whereQuery = whereQuery.Where(pa => pa.MessageId == messageId);
@@ -726,7 +729,7 @@ internal class Database
 			await database.VideosSubmitted.Where(vs => vs.PlaylistId == oldPlaylistId)
 				.UpdateAsync(vs => new VideoData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
 		}
-		await Console.Out.WriteLineAsync($"Number of rows updated={nRows}").ConfigureAwait(false);
+		Log.Verbose($"Number of rows updated={nRows}");
 	}
 
 	[Obsolete("Uses old database format", true)]
@@ -753,23 +756,23 @@ internal class Database
 		       new NpgsqlCommand("CREATE TABLE inventory(id serial PRIMARY KEY, name VARCHAR(50), quantity INTEGER);",
 			       Connection);
 		command1.ExecuteNonQuery();
-			Console.Out.WriteLine("Finished creating table");
+		Log.Verbose("Finished creating table");
 
-			using var command =
-			       new NpgsqlCommand("INSERT INTO inventory (name, quantity) VALUES (@n1, @q1), (@n2, @q2), (@n3, @q3);",
-				       Connection);
-			command.Parameters.AddWithValue("n1", "banana");
-			command.Parameters.AddWithValue("q1", 150);
-			command.Parameters.AddWithValue("n2", "orange");
-			command.Parameters.AddWithValue("q2", 154);
-			command.Parameters.AddWithValue("n3", "apple");
-			command.Parameters.AddWithValue("q3", 100);
+		using var command =
+		       new NpgsqlCommand("INSERT INTO inventory (name, quantity) VALUES (@n1, @q1), (@n2, @q2), (@n3, @q3);",
+			       Connection);
+		command.Parameters.AddWithValue("n1", "banana");
+		command.Parameters.AddWithValue("q1", 150);
+		command.Parameters.AddWithValue("n2", "orange");
+		command.Parameters.AddWithValue("q2", 154);
+		command.Parameters.AddWithValue("n3", "apple");
+		command.Parameters.AddWithValue("q3", 100);
 
-			var nRows = command.ExecuteNonQuery();
-			Console.Out.WriteLine(string.Format("Number of rows inserted={0}", nRows));
+		var nRows = command.ExecuteNonQuery();
+		Log.Verbose(string.Format("Number of rows inserted={0}", nRows));
 
 
-			Console.WriteLine("Press RETURN to exit");
+		Console.WriteLine("Press RETURN to exit");
 		Console.ReadLine();
 	}
 }

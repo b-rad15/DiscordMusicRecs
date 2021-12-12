@@ -11,9 +11,11 @@ using DSharpPlus.Interactivity.Enums;
 using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.Net;
 using DSharpPlus.SlashCommands;
+using Google;
 using Google.Apis.YouTube.v3.Data;
 using Newtonsoft.Json;
 using Npgsql;
+using Serilog;
 
 namespace DiscordMusicRecs;
 
@@ -107,7 +109,7 @@ public class SlashCommands : ApplicationCommandModule
                     .GetCustomAttributes()
                     .OfType<SlashCommandAttribute>();
 	            foreach (var attribute in slashCommandsAttr) 
-		            helpString = helpString + $"`/{prefix}{attribute.Name}`\n{attribute.Description}\n";
+		            helpString += $"`/{prefix}{attribute.Name}`\n{attribute.Description}\n";
             }
         }
 
@@ -152,7 +154,7 @@ public class SlashCommands : ApplicationCommandModule
         catch (Exception exception)
         {
             Debugger.Break();
-            await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+            Log.Error(exception.ToString());
             helpString +=
                 noPlaylistsFallback;
         }
@@ -238,7 +240,7 @@ public class SlashCommands : ApplicationCommandModule
         catch (Exception exception)
         {
             Debugger.Break();
-            await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+            Log.Error(exception.ToString());
             msg = new DiscordWebhookBuilder();
             msg.WithContent(
                 $"No Playlist or Videos found, if videos have been added, ask {Program.BotOwnerDiscordUser?.Mention} to check logs");
@@ -280,7 +282,7 @@ public class SlashCommands : ApplicationCommandModule
         catch (Exception exception)
         {
             Debugger.Break();
-            await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+            Log.Error(exception.ToString());
             msg = new DiscordWebhookBuilder();
             msg.WithContent(
                 $"Shits bad {Program.BotOwnerDiscordUser?.Mention}");
@@ -340,14 +342,30 @@ public class SlashCommands : ApplicationCommandModule
             }
             else
             {
-                try
-                {
-                    playlistId = await YoutubeAPIs.Instance.NewPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-                    // await Database.Instance.MakePlaylistTable(playlistId); Videos Submitted now stored in same table TODO: Learn to make tables of identical schema at runtime 
+	            try
+	            {
+		            playlistId = await YoutubeAPIs.Instance.NewPlaylist(playlistTitle, playlistDescription)
+			            .ConfigureAwait(false);
+		            // await Database.Instance.MakePlaylistTable(playlistId); Videos Submitted now stored in same table TODO: Learn to make tables of identical schema at runtime 
+	            }
+	            catch (GoogleApiException e)
+	            {
+		            if (e.Message.Contains("Reason[youtubeSignupRequired]"))
+		            {
+			            Log.Fatal("Must Sign up used google account for youtube channel");
+			            msg.WithContent(
+				            $"Google Account associated with bot does not have a youtube channel created, have {Program.BotOwnerDiscordUser?.Mention} create one on youtube's website");
+			            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+			            return;
+                    }
+		            else
+		            {
+			            throw;
+		            }
                 }
-                catch (Exception exception)
+                catch (Exception e)
                 {
-                    await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                    Log.Fatal(e.ToString());
                     Debugger.Break();
                     msg = new DiscordWebhookBuilder();
                     msg.WithContent(
@@ -365,7 +383,7 @@ public class SlashCommands : ApplicationCommandModule
             catch (Exception exception)
             {
                 Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                Log.Error(exception.ToString());
                 msg = new DiscordWebhookBuilder();
                 msg.WithContent(
                     $"Failed to adds recs channel, ask {Program.BotOwnerDiscordUser?.Mention} to check logs");
@@ -404,7 +422,7 @@ public class SlashCommands : ApplicationCommandModule
 
                 var wasChanged =
                     await Database.Instance.ChangeChannelId(Database.MainTableName, originalChannel.Id, bindChannel.Id).ConfigureAwait(false);
-                if (!wasChanged) await Console.Error.WriteLineAsync($"Fuck, {new StackFrame().GetFileLineNumber()}").ConfigureAwait(false);
+                if (!wasChanged) Log.Error($"Fuck, {new StackFrame().GetFileLineNumber()}");
 
                 rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
 	                channelId: bindChannel.Id).ConfigureAwait(false);
@@ -421,14 +439,14 @@ public class SlashCommands : ApplicationCommandModule
             }
             catch (PostgresException pgException)
             {
-                await Console.Error.WriteLineAsync(pgException.ToString()).ConfigureAwait(false);
+                Log.Error(pgException.ToString());
                 Debugger.Break();
                 msg = new DiscordWebhookBuilder();
                 msg.WithContent($"Failed to find entry {originalChannel.Mention}. It probably is not a recs channel");
             }
             catch (Exception exception)
             {
-                await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                Log.Error(exception.ToString());
                 Debugger.Break();
                 msg = new DiscordWebhookBuilder();
                 msg.WithContent(
@@ -498,7 +516,7 @@ public class SlashCommands : ApplicationCommandModule
 		                {
 			                if (rowData.ChannelId is null)
 			                {
-				                await Console.Error.WriteLineAsync("No Channel found, cannot delete message").ConfigureAwait(false);
+				                Log.Error("No Channel found, cannot delete message");
                                 continue;
 			                }
 			                else
@@ -521,7 +539,7 @@ public class SlashCommands : ApplicationCommandModule
             catch (Exception exception)
             {
                 Debugger.Break();
-                await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                Log.Error(exception.ToString());
                 msgResponse +=
                     $"Failed to remove recs channel, ask {Program.BotOwnerDiscordUser?.Mention} to check logs\n";
             }
@@ -577,7 +595,7 @@ public class SlashCommands : ApplicationCommandModule
 		        }
 		        catch (Exception e)
 		        {
-			        await Console.Error.WriteLineAsync(e.ToString()).ConfigureAwait(false);
+			        Log.Error(e.ToString());
 			        Debugger.Break();
 			        msg = new DiscordWebhookBuilder();
 			        msg.WithContent(
@@ -645,7 +663,7 @@ public class SlashCommands : ApplicationCommandModule
 	    catch (UnauthorizedException e)
 	    {
             Debugger.Break();
-            await Console.Error.WriteLineAsync(e.ToString()).ConfigureAwait(false);
+            Log.Error(e.ToString());
 	    }
     }
     private static async Task<string> DeleteEntryFromPlaylist(Database.VideoData entry, string playlistId, bool removeMessage = true)
@@ -708,7 +726,7 @@ public class SlashCommands : ApplicationCommandModule
 	    }
 	    catch (Exception e)
 	    {
-		    await Console.Error.WriteLineAsync(e.ToString()).ConfigureAwait(false);
+		    Log.Error(e.ToString());
 		    Debugger.Break();
 		    removeString +=
 			    $"Error removing {YoutubeAPIs.IdToVideo(entry.VideoId!)} from {YoutubeAPIs.IdToPlaylist(playlistId)}";
