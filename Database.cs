@@ -91,7 +91,8 @@ internal class Database
 						.UseAdminDatabase("postgres")
 						.EnableRetryOnFailure(5))
 				.UseSnakeCaseNamingConvention()
-				.LogTo(Log.Information);
+				.LogTo(Log.Verbose)
+				.EnableSensitiveDataLogging();
 		#region Required
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
 		{
@@ -567,10 +568,10 @@ internal class Database
 	public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
 		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
-		if (messageId is null && userId is null && videoId is null)
-		{
-			throw new Exception("At least one of messageId, userId, or videoId must not be null");
-		}
+		// if (messageId is null && userId is null && videoId is null)
+		// {
+		// 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
+		// }
 		if (messageId is not null)
 		{
 			whereQuery = whereQuery.Where(pa => pa.MessageId == messageId);
