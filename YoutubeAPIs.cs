@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
+using System.Net.Mime;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -13,6 +14,7 @@ using Google.Apis.Upload;
 using Google.Apis.Util.Store;
 using Google.Apis.YouTube.v3;
 using Google.Apis.YouTube.v3.Data;
+using Serilog;
 
 namespace DiscordMusicRecs;
 
@@ -117,8 +119,7 @@ internal class YoutubeAPIs
 			}
 		}
 
-		Console.WriteLine(
-			$"Playlist item id {videoToAdd.Id} (video ID {videoID}) was added to playlist id {videoToAdd.Snippet.PlaylistId} @ url https://www.youtube.com/playlist?list={videoToAdd.Snippet.PlaylistId}");
+		Log.Verbose($"Playlist item id {videoToAdd.Id} (video ID {videoID}) was added to playlist id {videoToAdd.Snippet.PlaylistId} @ url https://www.youtube.com/playlist?list={videoToAdd.Snippet.PlaylistId}");
 		return videoToAdd;
 	}
     //TODO: Get Playlist Items from database to save on API calls
@@ -172,7 +173,7 @@ internal class YoutubeAPIs
     public async Task<PlaylistItem> GetRandomVideoInPlaylist(string playlistId)
 	{
 		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
-		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //To is exclusive
+		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //Upper Limit is exclusive
 	}
 
 	public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
@@ -198,7 +199,10 @@ internal class YoutubeAPIs
 		catch (Google.GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[youtubeSignupRequired]"))
-				await Console.Error.WriteLineAsync("Must Sign up used google account for youtube channel").ConfigureAwait(false);
+			{
+				Log.Error("Must Sign up used google account for youtube channel");
+			}
+
 			throw;
 		}
 
@@ -214,7 +218,7 @@ internal class YoutubeAPIs
         var deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
         {
-			Console.WriteLine($"Delete Request returned ${deleteRequest}");
+			Log.Verbose($"Delete Request returned ${deleteRequest}");
         }
 
         return true;
@@ -241,7 +245,7 @@ internal class YoutubeAPIs
                 var deleteVideooResponse = await youTubeService.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(deleteVideooResponse))
                 {
-                    Console.WriteLine($"Delete Request returned ${deleteVideooResponse}");
+                   Log.Verbose($"Delete Request returned {deleteVideooResponse}");
                 }
 
                 ++vidsRemoved;

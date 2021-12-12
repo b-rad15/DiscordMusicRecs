@@ -1,6 +1,4 @@
-﻿// See https://aka.ms/new-console-template for more information
-
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.RegularExpressions;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -11,6 +9,7 @@ using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.SlashCommands;
 using Google.Apis.YouTube.v3.Data;
 using Npgsql;
+using Serilog;
 
 namespace DiscordMusicRecs;
 
@@ -76,7 +75,7 @@ internal class Program
 	            await HandleDeletedChannel(tmp.Thread.Id).ConfigureAwait(false);
                 break;
             default:
-	            await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?").ConfigureAwait(false);
+	            Log.Error("Ok which one of you added this method to another event?");
 	            return;
         }
     }
@@ -106,7 +105,7 @@ internal class Program
 	    catch (Exception exception)
 	    {
 		    Debugger.Break();
-		    await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+		    Log.Error(exception.ToString());
 	    }
     }
 
@@ -151,7 +150,7 @@ internal class Program
                 message = mrrea.Message;
                 break;
             default:
-                await Console.Error.WriteLineAsync("Ok which one of you added this method to another event?").ConfigureAwait(false);
+                Log.Error("Ok which one of you added this method to another event?");
                 return;
         }
 	    var rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: message.ChannelId).ConfigureAwait(false);
@@ -180,9 +179,6 @@ internal class Program
         if (e.Message.Author.Id != Discord.CurrentUser.Id)
             _ = Task.Run(async () =>
             {
-                // Console.WriteLine($"Message ID: {e.Message.Id}\n" +
-                //                   $"Channel ID: {e.Message.ChannelId}\n" +
-                //                   $"Server ID: {e.Guild.Id}\n");
                 var shouldDeleteMessage = false;
                 ulong? recsChannelId = null;
                 Database.PlaylistData? rowData = null;
@@ -194,7 +190,7 @@ internal class Program
                 catch (Exception exception)
                 {
                     Debugger.Break();
-                    await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                    Log.Error(exception.ToString());
                     recsChannelId = null;
                     return;
                 }
@@ -249,18 +245,19 @@ internal class Program
                             }
                             else
                             {
-                                await Console.Error.WriteLineAsync(exception.ToString()).ConfigureAwait(false);
+                                Log.Error(exception.ToString());
                                 throw;
                             }
                         }
                     }
                     else
                     {
+	                    Log.Debug($"Message \"\"");
                         if (removeNonUrls)
                         {
                             await e.Message.DeleteAsync().ConfigureAwait(false);
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-	                            $"Bad Recommendation, does not match ```javascript\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```").ConfigureAwait(false);
+	                            $"Bad Recommendation, does not match ```cs\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```").ConfigureAwait(false);
                             await Task.Delay(5000).ConfigureAwait(false);
                             await badMessage.DeleteAsync().ConfigureAwait(false);
                             shouldDeleteMessage = true;
@@ -274,10 +271,18 @@ internal class Program
         return Task.CompletedTask;
     }
 
+    private const string logPath = "logs";
+    private static CancellationToken mainCancellationToken = new();
     private static async Task Main(string[] args)
     {
-        Console.WriteLine("Starting Bot");
-        // await Database.Instance.MakeServerTables().ConfigureAwait(false);
+	    if (!Directory.Exists(logPath))
+		    Directory.CreateDirectory(logPath);
+	    Log.Logger = new LoggerConfiguration()
+		    .WriteTo.Console()
+		    .WriteTo.Async(a=>a.File(Path.Combine(logPath, ".log"), rollingInterval: RollingInterval.Day))
+		    .CreateLogger();
+	    Log.Information("Starting");
+	    // await Database.Instance.MakeServerTables().ConfigureAwait(false);
         await Database.Instance.MakeServerTables().ConfigureAwait(false);
         // await Task.Delay(20_000);
         // var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
@@ -286,7 +291,10 @@ internal class Program
         //     await Database.Instance.MakePlaylistTable(playlistId);
         // }
         await YoutubeAPIs.Instance.Initialize().ConfigureAwait(false);
-        if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true;
+        if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true; 
+
         MainAsync(args).GetAwaiter().GetResult();
+        // Finally, once just before the application exits...
+        Log.CloseAndFlush();
     }
 }
