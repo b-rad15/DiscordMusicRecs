@@ -55,8 +55,7 @@ public class RequireBotAdminPrivilegeAttribute : SlashCheckBaseAttribute
 
 public class SlashCommands : ApplicationCommandModule
 {
-    private static readonly Regex IReallyHopeThisPullsPlaylistIdsRegex = new(
-        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com))(\/(?:[\w\-]+\?list=|embed\/|list\/)?)([\w\-]+)(\S+)?$");
+    private static readonly Regex IReallyHopeThisPullsPlaylistIdsRegex = new(@"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com))(\/(?:[\w\-]+\?list=|embed\/|list\/)?)([\w\-]+)(\S+)?$");
 
     public static bool IsTextChannel(DiscordChannel channel)
     {
@@ -83,7 +82,11 @@ public class SlashCommands : ApplicationCommandModule
         var embed = new DiscordEmbedBuilder
         {
             Color = DiscordColor.Red,
-            Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>"
+            Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>",
+            Footer = new DiscordEmbedBuilder.EmbedFooter
+            {
+                Text = $"Donate: {DonateLinks[0]} Github: {GithubLink}"
+            }
         };
         List<Type> slashCommandGroups = new() { GetType() };
         slashCommandGroups.AddRange(GetAllNestedTypes(GetType()));
@@ -164,6 +167,20 @@ public class SlashCommands : ApplicationCommandModule
             msg.AddEmbed(embed.Build());
             await ctx.EditResponseAsync(msg).ConfigureAwait(false);
         }
+    }
+
+    private const string GithubLink = "https://github.com/b-rad15/DiscordMusicRecs";
+    [SlashCommand("github", "Get the link to the Github Repo for Discord Music Recs")]
+    public async Task GetGithubLink(InteractionContext ctx)
+    {
+	    await ctx.CreateResponseAsync(GithubLink).ConfigureAwait(false);
+    }
+
+    private static readonly string[] DonateLinks = { "https://ko-fi.com/bradocon" };
+    [SlashCommand("donate", "Prints all links to donate to the bot owner")]
+    public async Task GetDonateLinks(InteractionContext ctx)
+    {
+	    await ctx.CreateResponseAsync(string.Join('\n', DonateLinks)).ConfigureAwait(false);
     }
 
     [SlashCommand("GetRanking",
