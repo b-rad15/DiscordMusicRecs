@@ -85,7 +85,7 @@ public class SlashCommands : ApplicationCommandModule
             Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>",
             Footer = new DiscordEmbedBuilder.EmbedFooter
             {
-                Text = $"Donate: {DonateLinks[0]} Github: {GithubLink}"
+                Text = $"[Donate]({DonateLinks[0]}) [Github]({GithubLink})"
             }
         };
         List<Type> slashCommandGroups = new() { GetType() };
