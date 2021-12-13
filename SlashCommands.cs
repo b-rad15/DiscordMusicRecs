@@ -82,11 +82,7 @@ public class SlashCommands : ApplicationCommandModule
         var embed = new DiscordEmbedBuilder
         {
             Color = DiscordColor.Red,
-            Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>",
-            Footer = new DiscordEmbedBuilder.EmbedFooter
-            {
-                Text = $"[Donate]({DonateLinks[0]}) [Github]({GithubLink})"
-            }
+            Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>"
         };
         List<Type> slashCommandGroups = new() { GetType() };
         slashCommandGroups.AddRange(GetAllNestedTypes(GetType()));
@@ -163,7 +159,7 @@ public class SlashCommands : ApplicationCommandModule
         }
         finally
         {
-            embed.WithDescription(helpString);
+            embed.WithDescription(helpString + $"[Donate]({DonateLinks[0]}) [Github]({GithubLink})");
             msg.AddEmbed(embed.Build());
             await ctx.EditResponseAsync(msg).ConfigureAwait(false);
         }
