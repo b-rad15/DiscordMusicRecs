@@ -274,7 +274,6 @@ internal class Program
     }
 
     private const string logPath = "logs";
-    private static CancellationToken mainCancellationToken = new();
     private static async Task Main(string[] args)
     {
 	    if (!Directory.Exists(logPath))

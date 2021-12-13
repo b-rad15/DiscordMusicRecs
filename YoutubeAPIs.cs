@@ -75,10 +75,10 @@ internal class YoutubeAPIs
 		if (!initialized)
 			await this.Initialize().ConfigureAwait(false);
 		MakeNewPlaylist:
-		// Create a new, private playlist in the authorized user's channel.
-		if (string.IsNullOrWhiteSpace(playlistId))
+        // Create a new, private playlist in the authorized user's channel.
+        Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
+        if (string.IsNullOrWhiteSpace(playlistId))
 		{
-			Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
 			playlistId = await NewPlaylist(playlistName, playlistDescription).ConfigureAwait(false);
 		}
 		else
@@ -215,7 +215,7 @@ internal class YoutubeAPIs
         {
             throw new ArgumentNullException("playlistId");
         }
-        var deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
+        var deleteRequest = await youTubeService!.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
         {
 			Log.Verbose($"Delete Request returned ${deleteRequest}");
@@ -242,7 +242,7 @@ internal class YoutubeAPIs
             var videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
             await foreach (var videoToRemove in videosToRemove.ConfigureAwait(false))
             {
-                var deleteVideooResponse = await youTubeService.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
+                var deleteVideooResponse = await youTubeService!.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(deleteVideooResponse))
                 {
                    Log.Verbose($"Delete Request returned {deleteVideooResponse}");

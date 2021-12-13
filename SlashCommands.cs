@@ -159,7 +159,7 @@ public class SlashCommands : ApplicationCommandModule
         }
         finally
         {
-            embed.WithDescription(helpString + $"[Donate]({DonateLinks[0]}) [Github]({GithubLink})");
+            embed.WithDescription(helpString + $"\n[Donate]({DonateLinks[0]}) [Github]({GithubLink})");
             msg.AddEmbed(embed.Build());
             await ctx.EditResponseAsync(msg).ConfigureAwait(false);
         }

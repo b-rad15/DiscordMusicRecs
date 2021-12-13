@@ -26,13 +26,13 @@ internal class Database
 {
 	// Obtain connection string information from the portal
 	//
-	private static string Host = Program.Config.PostgresConfig.Host; //IP or Url of Postgres Server
-	private static string User = Program.Config.PostgresConfig.User; //Username for use on postgres database, probably postgres
-    private static string Port = Program.Config.PostgresConfig.Port; //TCP port that Postgres server is listening on, probably 5432
-	private static string Password = Program.Config.PostgresConfig.Password; //Password use when setting up postgres, not root password of server
-	private static string DBname = Program.Config.PostgresConfig.DbName; //Name of the database used
-    public static string MainTableName = Program.Config.PostgresConfig.MainTableName; //Name of main table, for server channel watches
-    public static string LogTableName = Program.Config.PostgresConfig.LogTableName; //Name of main table, for server channel watches
+	private static readonly string Host = Program.Config.PostgresConfig.Host; //IP or Url of Postgres Server
+	private static readonly string User = Program.Config.PostgresConfig.User; //Username for use on postgres database, probably postgres
+    private static readonly string Port = Program.Config.PostgresConfig.Port; //TCP port that Postgres server is listening on, probably 5432
+	private static readonly string Password = Program.Config.PostgresConfig.Password; //Password use when setting up postgres, not root password of server
+	private static readonly string DBname = Program.Config.PostgresConfig.DbName; //Name of the database used
+    public static readonly string MainTableName = Program.Config.PostgresConfig.MainTableName; //Name of main table, for server channel watches
+    public static readonly string LogTableName = Program.Config.PostgresConfig.LogTableName; //Name of main table, for server channel watches
 
     private readonly NpgsqlConnection Connection = null!;
 
