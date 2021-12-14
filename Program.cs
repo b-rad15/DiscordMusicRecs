@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -11,8 +12,9 @@ using Google.Apis.YouTube.v3.Data;
 using Npgsql;
 using Serilog;
 
-namespace DiscordMusicRecs;
+[assembly: InternalsVisibleTo("DiscordMusicRecsTest")]
 
+namespace DiscordMusicRecs;
 internal class Program
 {
     public const ulong BotOwnerId = 207600801928052737;
@@ -29,9 +31,11 @@ internal class Program
     // private static Regex youtubeRegex = new(@"(http(s?)://(www|music)\.)?(youtube\.com)/watch\?.*?(v=[a-zA-Z0-9_-]+)&?/?.*", RegexOptions.Compiled);
 
     // private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?", RegexOptions.Compiled);
-
-    public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
-        @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|yout\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
+    // modified from https://stackoverflow.com/questions/3717115/regular-expression-for-youtube-links
+    public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|list=.*?&v=)|embed\/|v\/))(?<id>[\w\-]+)|youtu\.be\/(?<id>\S+)))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+    // public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com(\/(?:[\w\-]+\?(v=|list=.*?&v=)|embed\/|v\/))([\w\-]+)|youtu\.be\/(\S+)))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+    // public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
+    //     @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
     public static readonly Regex IShouldJustCopyStackOverflowYoutubeMatchAnywhereInStringRegex = new(
         @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
 
@@ -197,11 +201,11 @@ internal class Program
                 if (rowData is not null)
                 {
                     Match match;
-                    if ((match = IShouldJustCopyStackOverflowYoutubeRegex.Match(e.Message.Content)).Success &&
-                        match.Groups[5].Value is not "playlist" or "watch" or "channel")
+                    if ((match = MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(e.Message.Content)).Success &&
+                        match.Groups["id"].Value is not "playlist" or "watch" or "channel")
                     {
                         var success = false;
-                        var id = match.Groups[5].Value;
+                        var id = match.Groups["id"].Value;
                         if (string.IsNullOrEmpty(id))
                         {
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
@@ -259,7 +263,7 @@ internal class Program
                         {
                             await e.Message.DeleteAsync().ConfigureAwait(false);
                             var badMessage = await Discord.SendMessageAsync(e.Channel,
-	                            $"Bad Recommendation, does not match ```cs\n/{IShouldJustCopyStackOverflowYoutubeRegex}/```").ConfigureAwait(false);
+	                            $"Bad Recommendation, does not match ```cs\n/{MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}/```").ConfigureAwait(false);
                             await Task.Delay(5000).ConfigureAwait(false);
                             await badMessage.DeleteAsync().ConfigureAwait(false);
                             shouldDeleteMessage = true;

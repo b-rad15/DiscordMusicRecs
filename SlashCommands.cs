@@ -16,6 +16,7 @@ using Google.Apis.YouTube.v3.Data;
 using Newtonsoft.Json;
 using Npgsql;
 using Serilog;
+// ReSharper disable UnusedMember.Global
 
 namespace DiscordMusicRecs;
 
@@ -337,7 +338,7 @@ public class SlashCommands : ApplicationCommandModule
                 var validPlaylist = false;
                 Match? playlistMatch;
                 if ((playlistMatch = IReallyHopeThisPullsPlaylistIdsRegex.Match(playlistId)).Success)
-                    playlistId = playlistMatch.Groups[5].Value;
+                    playlistId = playlistMatch.Groups["id"].Value;
 
                 if(string.IsNullOrWhiteSpace(playlistId))
                 {
@@ -576,11 +577,11 @@ public class SlashCommands : ApplicationCommandModule
 	        await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
 	        var msg = new DiscordWebhookBuilder();
 	        Match? match;
-	        if ((match = Program.IShouldJustCopyStackOverflowYoutubeRegex.Match(videoUrl)).Success &&
-	            match.Groups[5].Value is not "playlist" or "watch" or "channel" &&
-	            !string.IsNullOrWhiteSpace(match.Groups[5].Value))
+	        if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(videoUrl)).Success &&
+	            match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
+	            !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
 	        {
-		        var id = match.Groups[5].Value;
+		        var id = match.Groups["id"].Value;
 		        var rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
 			        channelId: watchChannel.Id).ConfigureAwait(false);
 		        if (rowData?.PlaylistId is null)
@@ -619,7 +620,7 @@ public class SlashCommands : ApplicationCommandModule
 	        else
 	        {
 		        msg.WithContent(
-			        $"Cannot extract video id, url given does not match `regex\n{Program.IShouldJustCopyStackOverflowYoutubeRegex}`");
+			        $"Cannot extract video id, url given does not match `regex\n{Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}`");
 		        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
 	        }
         }
