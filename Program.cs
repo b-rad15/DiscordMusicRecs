@@ -32,7 +32,7 @@ internal class Program
 
     // private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?", RegexOptions.Compiled);
     // modified from https://stackoverflow.com/questions/3717115/regular-expression-for-youtube-links
-    public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|list=.*?&v=)|embed\/|v\/))(?<id>[\w\-]+)|youtu\.be\/(?<id>\S+)))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+    public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|[\w-=&]*?&v=)|embed\/|v\/))(?<id>[\w\-]+)(&\S+)*|youtu\.be\/(?<id>\S+)))", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
     // public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com(\/(?:[\w\-]+\?(v=|list=.*?&v=)|embed\/|v\/))([\w\-]+)|youtu\.be\/(\S+)))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
     // public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
     //     @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
