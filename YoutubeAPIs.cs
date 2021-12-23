@@ -70,20 +70,23 @@ internal class YoutubeAPIs
 
     //https://developers.google.com/youtube/v3/code_samples/dotnet
 	public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
-            string playlistDescription = "")
+		string playlistDescription = "", bool makeNewPlaylistOnError = true, bool checkForDupes = false)
 	{
 		if (!initialized)
 			await this.Initialize().ConfigureAwait(false);
 		MakeNewPlaylist:
-        // Create a new, private playlist in the authorized user's channel.
         Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
         if (string.IsNullOrWhiteSpace(playlistId))
 		{
+			if (!makeNewPlaylistOnError)
+			{
+				throw new ArgumentNullException(nameof(playlistId));
+			}
 			playlistId = await NewPlaylist(playlistName, playlistDescription).ConfigureAwait(false);
 		}
-		else
+		else if(checkForDupes)
 		{
-			await foreach (var existingVideoId in GetVideoIdsInPlaylist(playlistId).ConfigureAwait(false))
+			await foreach (string existingVideoId in GetVideoIdsInPlaylist(playlistId).ConfigureAwait(false))
 			{
 				if (existingVideoId == videoID)
                 {
@@ -127,20 +130,19 @@ internal class YoutubeAPIs
      {
 	     if (!initialized)
              await this.Initialize().ConfigureAwait(false);
-         var pagingToken = "";
+         string? pagingToken = "";
          while (pagingToken is not null)
          {
              Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-             var playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
+             PlaylistItemsResource.ListRequest? playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
              playlistItemsRequest.PlaylistId = playlistId;
              playlistItemsRequest.MaxResults = 100;
              playlistItemsRequest.PageToken = pagingToken;
-             var playlistItems = await playlistItemsRequest.ExecuteAsync().ConfigureAwait(false);
-             foreach (var playlistItem in playlistItems.Items)
+             PlaylistItemListResponse? playlistItems = await playlistItemsRequest.ExecuteAsync().ConfigureAwait(false);
+             foreach (PlaylistItem? playlistItem in playlistItems.Items)
              {
                  yield return playlistItem;
              }
-
              pagingToken = playlistItems.NextPageToken;
          }
      }
@@ -150,16 +152,16 @@ internal class YoutubeAPIs
     {
         if (!initialized)
             await this.Initialize().ConfigureAwait(false);
-        var pagingToken = "";
+        string? pagingToken = "";
         while (pagingToken is not null)
         {
             Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-            var playlistsRequest = youTubeService.Playlists.List("snippet");
+            PlaylistsResource.ListRequest? playlistsRequest = youTubeService.Playlists.List("snippet");
             playlistsRequest.Mine = true;
             playlistsRequest.MaxResults = 100;
             playlistsRequest.PageToken = pagingToken;
-            var playlistItems = await playlistsRequest.ExecuteAsync().ConfigureAwait(false);
-            foreach (var playlistItem in playlistItems.Items)
+            PlaylistListResponse? playlistItems = await playlistsRequest.ExecuteAsync().ConfigureAwait(false);
+            foreach (Playlist? playlistItem in playlistItems.Items)
             {
                 yield return playlistItem;
             }
@@ -172,18 +174,20 @@ internal class YoutubeAPIs
 
     public async Task<PlaylistItem> GetRandomVideoInPlaylist(string playlistId)
 	{
-		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
+		List<PlaylistItem> allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
 		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //Upper Limit is exclusive
 	}
 
-	public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
+    public const string defaultPlaylistName = "Recommendation Playlist";
+    public const string defaultPlaylistDescription = "Auto-Generated Discord Recommendation Playlist";
+    public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
 	{
 		recommendationPlaylist = new Playlist
 		{
 			Snippet = new PlaylistSnippet
 			{
-				Title = !string.IsNullOrEmpty(playlistName) ? playlistName : "Recommendation Playlist",
-				Description = !string.IsNullOrEmpty(playlistDescription) ? playlistDescription : "Auto-Generated Discord Recommendation Playlist"
+				Title = !string.IsNullOrEmpty(playlistName) ? playlistName : defaultPlaylistName,
+				Description = !string.IsNullOrEmpty(playlistDescription) ? playlistDescription : defaultPlaylistDescription
 			},
 			Status = new PlaylistStatus
 			{
@@ -215,7 +219,7 @@ internal class YoutubeAPIs
         {
             throw new ArgumentNullException("playlistId");
         }
-        var deleteRequest = await youTubeService!.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
+        string? deleteRequest = await youTubeService!.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
         {
 			Log.Verbose($"Delete Request returned ${deleteRequest}");
@@ -224,6 +228,18 @@ internal class YoutubeAPIs
         return true;
     }
 
+    public async Task RemovePlaylistItem(string playlistItemId)
+    {
+	    if (string.IsNullOrWhiteSpace(playlistItemId))
+	    {
+		    throw new ArgumentNullException(nameof(playlistItemId));
+	    }
+	    string? deleteResponse = await youTubeService!.PlaylistItems.Delete(playlistItemId).ExecuteAsync().ConfigureAwait(false);
+	    if (!string.IsNullOrWhiteSpace(deleteResponse))
+	    {
+		    Log.Verbose($"Delete Request returned {deleteResponse}");
+	    }
+    }
     public async Task<int> RemoveFromPlaylist(string playlistId, string videoId)
     {
         if (string.IsNullOrWhiteSpace(playlistId))
@@ -235,14 +251,14 @@ internal class YoutubeAPIs
             throw new ArgumentException("videoId is null or whitespace");
         }
 
-        var vidsRemoved = 0;
-        await foreach (var playlist in GetMyPlaylists().ConfigureAwait(false))
+        int vidsRemoved = 0;
+        await foreach (Playlist playlist in GetMyPlaylists().ConfigureAwait(false))
         {
             if (playlist.Id != playlistId) continue;
-            var videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
-            await foreach (var videoToRemove in videosToRemove.ConfigureAwait(false))
+            IAsyncEnumerable<PlaylistItem> videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
+            await foreach (PlaylistItem videoToRemove in videosToRemove.ConfigureAwait(false))
             {
-                var deleteVideooResponse = await youTubeService!.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
+                string? deleteVideooResponse = await youTubeService!.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(deleteVideooResponse))
                 {
                    Log.Verbose($"Delete Request returned {deleteVideooResponse}");

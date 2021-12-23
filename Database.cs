@@ -7,8 +7,10 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net.Http.Headers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using DSharpPlus.Entities;
@@ -45,6 +47,9 @@ internal class Database
 		public string VideoId { get; set; } = null!;
 		[Required]
 		public string PlaylistItemId { get; set; } = null!;
+		public string? WeeklyPlaylistItemId { get; set; }
+		public string? MonthlyPlaylistItemId { get; set; }
+		public string? YearlyPlaylistItemId { get; set; }
 		public ulong? ChannelId { get; set; }
 		[Required]
 		public ulong UserId { get; set; }
@@ -66,6 +71,12 @@ internal class Database
 		public ulong ServerId { get; set; }
 		public ulong? ChannelId { get; set; }
 		public bool IsConnectedToChannel { get; set; }
+		public string WeeklyPlaylistID { get; set; } = null!;
+		public DateTime WeeklyTimeCreated { get; set; }
+		public string MonthlyPlaylistID { get; set; } = null!;
+		public DateTime MonthlyTimeCreated { get; set; }
+		public string YearlyPlaylistID { get; set; } = null!;
+		public DateTime YearlyTimeCreated { get; set; }
 		public DateTime TimeCreated { get; set; }
 		[Required]
 		[Key]
@@ -132,6 +143,9 @@ internal class Database
 				.IsRequired()
 				.HasDefaultValue(0);
 			builder
+				.HasOne(video => video.PlaylistId)
+				.WithMany();
+			builder
 				.ToTable(LogTableName);
 		}
 	}
@@ -161,49 +175,13 @@ internal class Database
 				.HasDefaultValueSql("CURRENT_TIMESTAMP")
 				.HasColumnType("timestamp");
 			builder
+				.HasMany<VideoData>()
+				.WithOne(video => video.Playlist)
+				.IsRequired();
+			builder
 				.ToTable(MainTableName);
 		}
 	}
-	public readonly struct MainData
-    {
-        public readonly int? id;
-        public readonly ulong? serverId;
-        public readonly ulong? channelId;
-        public readonly string? playlistId;
-
-        public MainData(int? id, ulong? serverId, ulong? channelId, string? playlistId)
-        {
-            this.id = id;
-            this.serverId = serverId;
-            this.channelId = channelId;
-            this.playlistId = playlistId;
-        }
-    }
-    public readonly struct PlaylistEntry
-    {
-	    public readonly int? id;
-	    public readonly string? videoId;
-	    public readonly string? playlistItemId;
-	    public readonly ulong? channelId;
-	    public readonly ulong? userId;
-	    public readonly DateTime? timeSubmitted;
-	    public readonly ulong? messageId;
-	    public readonly short? upvotes;
-	    public readonly short? downvotes;
-
-	    public PlaylistEntry(int? id = null, string? videoId = null, string? playlistItemId = null, ulong? channelId = null, ulong? userId = null, DateTime? timeSubmitted = null, ulong? messageId = null, short? upvotes = null, short? downvotes = null)
-	    {
-		    this.id = id;
-		    this.videoId = videoId;
-		    this.playlistItemId = playlistItemId;
-		    this.channelId = channelId;
-		    this.userId = userId;
-		    this.timeSubmitted = timeSubmitted;
-		    this.messageId = messageId;
-		    this.upvotes = upvotes;
-		    this.downvotes = downvotes;
-	    }
-    }
 
     private readonly DiscordDatabaseContext database;
     private Database()
@@ -260,6 +238,8 @@ internal class Database
 		return conn;
 	}
 
+	internal async Task<int> SaveDatabase() => await database.SaveChangesAsync().ConfigureAwait(false);
+
 	public async Task MakeServerTables()
 	{
 		await database.Database.MigrateAsync().ConfigureAwait(false);
@@ -278,31 +258,36 @@ internal class Database
 		return await database.PlaylistsAdded.Select(pa => pa.PlaylistId).ToListAsync().ConfigureAwait(false);
     }
 
-    public async Task<int> AddVideoToPlaylistTable(string playlistId, string videoId, string playlistItemId, ulong? channelId, ulong userId, DateTimeOffset timeSubmitted, ulong messageId)
+    public async Task<int> AddVideoToPlaylistTable(string playlistId, string videoId, string playlistItemId,
+	    string weeklyPlaylistId, string monthlyPlaylistId, string yearlyPlaylistId, ulong? channelId, ulong userId,
+	    DateTimeOffset timeSubmitted, ulong messageId)
     {
 	    await database.AddAsync(new VideoData
 	    {
 		    VideoId = videoId,
 		    PlaylistItemId = playlistItemId,
+		    WeeklyPlaylistItemId = weeklyPlaylistId,
+			MonthlyPlaylistItemId = monthlyPlaylistId,
+			YearlyPlaylistItemId = yearlyPlaylistId,
 		    ChannelId = channelId,
 		    UserId = userId,
 		    TimeSubmitted = timeSubmitted.DateTime,
 		    MessageId = messageId,
 		    PlaylistId = playlistId
 	    }).ConfigureAwait(false);
-	    var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
+	    int nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 	    return nRows;
     }
 
     public async Task<int> UpdateVotes(string? videoId = null, ulong? messageId = null, ulong? channelId = null, string? playlistId = null,
         short? upvotes = null, short? downvotes = null)
     {
-	    var videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
+	    VideoData videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
 		if (upvotes is not null)
 			videoItem.Upvotes = upvotes.Value;
 		if(downvotes is not null)
 			videoItem.Downvotes = downvotes.Value;
-		var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
+		int nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 		return nRows;
 		//database.VideosSubmitted.Where(vs => vs.MessageId == messageId && )
         if (messageId is null && videoId is null)
@@ -336,8 +321,8 @@ internal class Database
         {
             Connection = Connection
         };
-        await using var _ = command.ConfigureAwait(false);
-        var setString = "";
+        await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
+        string setString = "";
         if (upvotes is not null)
         {
             if (!string.IsNullOrWhiteSpace(setString))
@@ -356,7 +341,7 @@ internal class Database
             setString += "downvotes=@downvotes";
             command.Parameters.AddWithValue("downvotes", NpgsqlDbType.Smallint, downvotes);
 		}
-        var whereString = "";
+        string whereString = "";
 		if (videoId is not null)
         {
             if (!string.IsNullOrWhiteSpace(whereString))
@@ -375,7 +360,7 @@ internal class Database
             whereString += "message_id=@messageId";
             command.Parameters.AddWithValue("messageId", NpgsqlDbType.Numeric, (BigInteger)messageId);
 		}
-		var updateString = $"UPDATE \"{playlistId}\" SET {setString} WHERE {whereString} ;";
+		string updateString = $"UPDATE \"{playlistId}\" SET {setString} WHERE {whereString} ;";
         command.CommandText = updateString;
         return nRows;
     }
@@ -383,7 +368,7 @@ internal class Database
 	//TODO: Add variable selector
     public async Task<bool> CheckPlaylistChannelExists(string tableName, int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
 	{
-		var videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync().ConfigureAwait(false);
+		PlaylistData? videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync().ConfigureAwait(false);
 		return videoItem != default(PlaylistData);
 
 		if (id is null && serverId is null && channelId is null && playlistId is null)
@@ -395,7 +380,7 @@ internal class Database
 	    {
 		    Connection = Connection,
 	    };
-	    var whereString = "";
+	    string whereString = "";
 	    if (id is not null)
 	    {
 		    whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} id = @id";
@@ -424,7 +409,7 @@ internal class Database
 	    Debug.WriteLine(command.CommandText);
 	    try
 		{
-			var data = await command.ExecuteScalarAsync().ConfigureAwait(false);
+			object data = await command.ExecuteScalarAsync().ConfigureAwait(false);
 			return data is not null;
 		}
 	    catch (DbException)
@@ -437,7 +422,7 @@ internal class Database
     public async Task<PlaylistData?> GetRowData(string tableName, ulong? serverId = null, ulong? channelId = null,
 	    string? playlistId = null)
     {
-	    var rowBase = database.PlaylistsAdded;
+	    DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
 	    IQueryable<PlaylistData>? whereQuery = null;
         if (serverId is null && channelId is null && playlistId is null)
         {
@@ -465,7 +450,7 @@ internal class Database
 		try
 		{
 			Debug.Assert(whereQuery != null, nameof(whereQuery) + " != null");
-			var rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
+			PlaylistData rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
 			return rowData;
 		}
 		catch (InvalidOperationException)
@@ -479,41 +464,47 @@ internal class Database
 			return null;
 		}
 	}
-	public async Task<List<PlaylistData>> GetRowsData(string tableName, int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
+	public async Task<List<PlaylistData>> GetRowsDataSafe(ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
 	{
-		var rowBase = database.PlaylistsAdded;
-		IQueryable<PlaylistData>? whereQuery = null;
 		if (serverId is null && channelId is null && playlistId is null)
 		{
 			throw new Exception("At least one of id, serverId, channelId, or playlistId");
 		}
+
+		return await GetRowsData(serverId, channelId, playlistId).ConfigureAwait(false);
+	}
+	internal async Task<List<PlaylistData>> GetRowsData(ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
+	{
+		DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
+		IQueryable<PlaylistData>? whereQuery = null;
 		if (channelId is not null)
 		{
-			whereQuery = (whereQuery is not null
-				? whereQuery.Where(pa => pa.ChannelId == channelId)
-				: rowBase.Where(pa => pa.ChannelId == channelId));
+			whereQuery = whereQuery?
+				.Where(pa => pa.ChannelId == channelId) 
+				?? rowBase.Where(pa => pa.ChannelId == channelId);
 		}
 		if (serverId is not null)
 		{
-			whereQuery = (whereQuery is not null
-				? whereQuery.Where(pa => pa.ServerId == serverId)
-				: rowBase.Where(pa => pa.ServerId == serverId));
+			whereQuery = whereQuery?
+				.Where(pa => pa.ServerId == serverId)
+				?? rowBase.Where(pa => pa.ServerId == serverId);
 		}
+
 		if (playlistId is not null)
 		{
-			whereQuery = whereQuery is not null
-				? whereQuery.Where(pa => pa.PlaylistId == playlistId)
-				: rowBase.Where(pa => pa.PlaylistId == playlistId);
+			whereQuery = whereQuery?
+				.Where(pa => pa.PlaylistId == playlistId)
+				?? rowBase.Where(pa => pa.PlaylistId == playlistId);
 		}
-		Debug.Assert(whereQuery != null, nameof(whereQuery) + " != null");
-		var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
+		//If whereQuery is null fallback to just returning all with rowBase
+		List<PlaylistData> rowData = await (whereQuery ?? rowBase).ToListAsync().ConfigureAwait(false);
 		return rowData;
 	}
 
 	public async Task<int> DeletePlaylistItem(string playlistId, ulong? messageId = null,
 		ulong? userId = null, string? videoId = null)
 	{
-		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
+		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		if (messageId is null && userId is null && videoId is null)
 		{
 			throw new Exception("At least one of messageId, userId, or videoId must not be null");
@@ -533,9 +524,9 @@ internal class Database
 
 		try
 		{
-			var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
+			List<VideoData> rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
 			database.RemoveRange(rowData);
-			var nRows = await database.SaveChangesAsync().ConfigureAwait(false);
+			int nRows = await database.SaveChangesAsync().ConfigureAwait(false);
 			return nRows;
 		}
 		catch (Exception e)
@@ -554,7 +545,7 @@ internal class Database
 
 	public async Task<List<VideoData>> GetRankedPlaylistItems(string playlistId)
 	{
-		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
+		IOrderedQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
 		return await whereQuery.ToListAsync().ConfigureAwait(false);
 	}
 
@@ -567,7 +558,7 @@ internal class Database
 	//TODO: Replace returning null item with returning none and checking with .Any()
 	public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
-		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
+		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		// if (messageId is null && userId is null && videoId is null)
 		// {
 		// 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
@@ -585,13 +576,114 @@ internal class Database
 			whereQuery = whereQuery.Where(pa => pa.VideoId == videoId);
 		}
 		
-		var rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
-		return rowData;
+		return await GetPlaylistItemsUnsafe(whereQuery).ConfigureAwait(false);
 	}
 
+	internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(IQueryable<VideoData>? whereQuery = null) =>
+		await (whereQuery ?? database.VideosSubmitted).ToListAsync().ConfigureAwait(false);
+
+	internal async Task<List<VideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<VideoData, bool>> whereFunc) =>
+		await database.VideosSubmitted.Where(whereFunc).ToListAsync().ConfigureAwait(false);
+
+	private static Expression<Func<VideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null)
+	{
+		DateTime dt = passedDateTime ?? DateTime.Now;
+		return video => video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length > 0 && video.TimeSubmitted < dt.StartOfWeek(StartOfWeek);
+	}
+	// private static Expression<Func<PlaylistData, bool>> WeeklySubmissionsToAddWithPlaylistDataFunc(DateTime? passedDateTime = null)
+	// {
+	//
+	// }
+	public const DayOfWeek StartOfWeek = DayOfWeek.Sunday;
+	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddWeekly(DateTime? passedDateTime = null)
+	{
+		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
+			new PlaylistData
+				{ PlaylistId = playlist.PlaylistId, WeeklyPlaylistID = playlist.WeeklyPlaylistID, Videos = playlist.Videos.Where(video =>
+				video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length > 0 && video.TimeSubmitted <
+				(passedDateTime ?? DateTime.Now).StartOfWeek(StartOfWeek)).Select(video => new VideoData{WeeklyPlaylistItemId = video.WeeklyPlaylistItemId, VideoId = video.VideoId}).ToList()
+		}).ToListAsync().ConfigureAwait(false);
+		return pld;
+	}
+	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddMonthly(DateTime? passedDateTime = null)
+	{
+		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
+			new PlaylistData
+				{ PlaylistId = playlist.PlaylistId, MonthlyPlaylistID = playlist.MonthlyPlaylistID, Videos = playlist.Videos.Where(video =>
+				video.MonthlyPlaylistItemId != null && video.MonthlyPlaylistItemId.Length > 0 && video.TimeSubmitted <
+				(passedDateTime ?? DateTime.Now).StartOfMonth()).Select(video => new VideoData{MonthlyPlaylistItemId = video.MonthlyPlaylistItemId, VideoId = video.VideoId}).ToList()
+		}).ToListAsync().ConfigureAwait(false);
+		return pld;
+	}
+	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddYearly(DateTime? passedDateTime = null)
+	{
+		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
+			new PlaylistData
+				{ PlaylistId = playlist.PlaylistId, YearlyPlaylistID = playlist.YearlyPlaylistID, Videos = playlist.Videos.Where(video =>
+				video.YearlyPlaylistItemId != null && video.YearlyPlaylistItemId.Length > 0 && video.TimeSubmitted <
+				(passedDateTime ?? DateTime.Now).StartOfYear()).Select(video => new VideoData{YearlyPlaylistItemId = video.YearlyPlaylistItemId, VideoId = video.VideoId}).ToList()
+		}).ToListAsync().ConfigureAwait(false);
+		return pld;
+	}
+	private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null)
+	{
+		DateTime dt = passedDateTime ?? DateTime.Now;
+		return video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && video.TimeSubmitted < dt.StartOfWeek(StartOfWeek);
+	}
+	internal async Task<List<string>> GetPlaylistItemsToRemoveWeekly(DateTime? passedDateTime = null)
+	{
+		return (await database.VideosSubmitted
+			.Where(WeeklySubmissionsToRemoveFunc(passedDateTime))
+			.Select(video => video.WeeklyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
+	}
+	internal async Task<int> NullOneWeeklyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
+		.Where(video=>video.WeeklyPlaylistItemId == playlistItemId)
+		.UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
+	internal async Task<int> NullAllWeeklyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
+		.Where(WeeklySubmissionsToRemoveFunc(passedDateTime))
+		.UpdateFromQueryAsync(video => new VideoData{WeeklyPlaylistItemId = null}).ConfigureAwait(false);
+
+	private static Expression<Func<VideoData, bool>> UnallowedMonthlySubmissionsFunc(DateTime? passedDateTime = null)
+	{
+		DateTime dt = passedDateTime ?? DateTime.Now;
+		return video => string.IsNullOrEmpty(video.MonthlyPlaylistItemId) && video.TimeSubmitted < dt.StartOfMonth();
+	}
+
+	internal async Task<List<string>> GetPlaylistItemsToRemoveMonthly(DateTime? passedDateTime = null)
+	{
+		return (await database.VideosSubmitted
+			.Where(UnallowedMonthlySubmissionsFunc(passedDateTime))
+			.Select(video => video.MonthlyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
+	}
+
+	internal async Task<int> NullOneMonthlyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
+		.Where(video => video.MonthlyPlaylistItemId == playlistItemId)
+		.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
+	internal async Task<int> NullAllMonthlyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
+		.Where(UnallowedMonthlySubmissionsFunc(passedDateTime))
+		.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
+
+
+	private static Expression<Func<VideoData, bool>> UnallowedYearlySubmissionsFunc(DateTime? passedDateTime = null)
+	{
+		DateTime dt = passedDateTime ?? DateTime.Now;
+		return video => string.IsNullOrEmpty(video.YearlyPlaylistItemId) && video.TimeSubmitted < dt.StartOfYear();
+	}
+	internal async Task<List<string>> GetPlaylistItemsToRemoveYearly(DateTime? passedDateTime = null)
+	{
+		return (await database.VideosSubmitted
+			.Where(UnallowedYearlySubmissionsFunc(passedDateTime))
+			.Select(video => video.YearlyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
+	}
+	internal async Task<int> NullOneYearlyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
+		.Where(video => video.YearlyPlaylistItemId == playlistItemId)
+		.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+	internal async Task<int> NullAllYearlyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
+		.Where(UnallowedYearlySubmissionsFunc(passedDateTime))
+		.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
 	public async Task<VideoData?> GetPlaylistItem(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
-		var whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
+		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		if (messageId is null && userId is null && videoId is null)
 		{
 			throw new Exception("At least one of messageId, userId, or videoId must not be null");
@@ -612,7 +704,7 @@ internal class Database
 		try
 		{
 
-			var rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
+			VideoData rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
 			return rowData;
 		}
 		catch (InvalidOperationException)
@@ -629,7 +721,7 @@ internal class Database
 	//Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel
 	public async Task<bool> DeleteRowWithServer(string tableName, ulong serverId, ulong channelId)
 	{
-		var nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false);
+		int nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false);
 		return nRows > 0;
 	}
 	
@@ -639,20 +731,34 @@ internal class Database
 	{
 		return await database.PlaylistsAdded.Where(pa => pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false) > 0;
     }
-	public async Task InsertRow(string tableName, ulong serverId, string playlistId, ulong? channelId = null, DateTime? timeCreated = null)
+	public async Task InsertRow(string tableName, ulong serverId, string playlistId, string weeklyPlaylistId, string monthlyPlaylistId, string yearlyPlaylistId, ulong? channelId = null, DateTime? timeCreated = null)
 	{
 		var playlistData = new PlaylistData
 		{
 			ChannelId = channelId, 
 			IsConnectedToChannel = channelId is not null, 
 			PlaylistId = playlistId,
+			WeeklyPlaylistID = weeklyPlaylistId,
+			MonthlyPlaylistID = monthlyPlaylistId,
+			YearlyPlaylistID = yearlyPlaylistId,
 			ServerId = serverId
 		};
 		if (timeCreated is not null)
-			playlistData.TimeCreated = timeCreated.Value;
+		{
+			playlistData.TimeCreated =
+			playlistData.WeeklyTimeCreated = 
+			playlistData.MonthlyTimeCreated =
+			playlistData.YearlyTimeCreated =
+				timeCreated.Value;
+		}
+		await InsertRow(playlistData).ConfigureAwait(false);
+	}
+	public async Task InsertRow(PlaylistData playlistData)
+	{
 		await database.PlaylistsAdded.AddAsync(playlistData).ConfigureAwait(false);
 		await database.SaveChangesAsync().ConfigureAwait(false);
 	}
+
 	//TODO: Convert to Entity Framework or delete
 	[Obsolete("Uses old database format", true)]
 	public async Task<string> GetPlaylistId(string tableName, ulong channelId)
@@ -662,10 +768,10 @@ internal class Database
             CommandText = $"SELECT playlist_id FROM {tableName} WHERE channel_id=@channelId;",
 			Connection = Connection,
         };
-        await using var _ = command.ConfigureAwait(false);
+        await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
         command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
-        var reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
-        await using var __ = reader.ConfigureAwait(false);
+        NpgsqlDataReader reader = await command.ExecuteReaderAsync().ConfigureAwait(false);
+        await using ConfiguredAsyncDisposable __ = reader.ConfigureAwait(false);
         await reader.ReadAsync().ConfigureAwait(false);
 		try
 		{
@@ -681,8 +787,8 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	public async Task<ulong> GetChannelId(string tableName, ulong serverId)
 	{
-		var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName} WHERE server_id={serverId};").ConfigureAwait(false);
-		await using var _ = reader.ConfigureAwait(false);
+		NpgsqlDataReader reader = await ExecuteQuery($"SELECT channel_id FROM {tableName} WHERE server_id={serverId};").ConfigureAwait(false);
+		await using ConfiguredAsyncDisposable _ = reader.ConfigureAwait(false);
 		await reader.ReadAsync().ConfigureAwait(false);
 		return (ulong)reader.GetDecimal(0);
 	}
@@ -691,15 +797,15 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	public async IAsyncEnumerable<ulong> GetChannelIds(string tableName, ulong serverId)
 	{
-		var reader = await ExecuteQuery($"SELECT channel_id FROM {tableName};").ConfigureAwait(false);
-		await using var _ = reader.ConfigureAwait(false);
-		var channelIDs = new List<ulong>();
+		NpgsqlDataReader reader = await ExecuteQuery($"SELECT channel_id FROM {tableName};").ConfigureAwait(false);
+		await using ConfiguredAsyncDisposable _ = reader.ConfigureAwait(false);
+		List<ulong> channelIDs = new List<ulong>();
 		while (await reader.ReadAsync().ConfigureAwait(false)) yield return (ulong)reader.GetDecimal(1);
 	}
 	
 	public async Task<bool> ChangeChannelId(string tableName, ulong originalChannel, ulong newChannel)
 	{
-		var nRows = await database.PlaylistsAdded.Where(pa => pa.ChannelId == originalChannel)
+		int nRows = await database.PlaylistsAdded.Where(pa => pa.ChannelId == originalChannel)
 			.UpdateAsync(pa => new PlaylistData { ChannelId = newChannel }).ConfigureAwait(false);
 		return nRows > 0;
 		//TODO: Learn how to use update statement with Entity Framework Core (Maybe I did with Entity Framework Plus Library)
@@ -708,20 +814,23 @@ internal class Database
             {
                 CommandText = $"UPDATE {tableName} SET channel_id = @newChannel WHERE channel_id = @originalChannel;"
             };
-		await using var _ = command.ConfigureAwait(false);
+		await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
 
 		command.Parameters.AddWithValue("originalChannel", NpgsqlDbType.Numeric, (BigInteger)originalChannel);
 		command.Parameters.AddWithValue("newChannel", NpgsqlDbType.Numeric, (BigInteger)newChannel);
 		// var nRows = command.ExecuteNonQuery();
         return nRows != 0;
     }
-	public async Task ChangePlaylistId(string tableName, ulong serverId, ulong channelId, string newPlaylistId, string oldPlaylistId)
+
+	//TODO: Allow for handling of deleted time-based playlists
+	[Obsolete("Verify that playlists are created when added, otherwise rerun addplaylist")]
+	public async Task ChangePlaylistId(ulong serverId, ulong channelId, string newPlaylistId, string oldPlaylistId)
 	{
-		var nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId && pa.PlaylistId == oldPlaylistId)
+		int nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId && pa.PlaylistId == oldPlaylistId)
 			.UpdateAsync(pa => new PlaylistData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
 		if (nRows == 0)
 		{
-			await this.InsertRow(tableName, serverId, newPlaylistId, channelId: channelId).ConfigureAwait(false);
+			// await this.InsertRow(tableName, serverId, newPlaylistId, channelId: channelId).ConfigureAwait(false);
 			nRows = -1;
 		}
 		else
@@ -736,7 +845,7 @@ internal class Database
 	private async Task ExecuteNonQuery(string commandString)
 	{
 		var command = new NpgsqlCommand(commandString, Connection);
-		await using var _ = command.ConfigureAwait(false);
+		await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
 		await command.ExecuteNonQueryAsync().ConfigureAwait(false);
 	}
 
@@ -744,7 +853,7 @@ internal class Database
 	private async Task<NpgsqlDataReader> ExecuteQuery(string commandString)
 	{
 		var command = new NpgsqlCommand(commandString, Connection);
-		await using var _ = command.ConfigureAwait(false);
+		await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
 		Console.WriteLine(commandString);
 		return await command.ExecuteReaderAsync().ConfigureAwait(false);
 	}
@@ -768,7 +877,7 @@ internal class Database
 		command.Parameters.AddWithValue("n3", "apple");
 		command.Parameters.AddWithValue("q3", 100);
 
-		var nRows = command.ExecuteNonQuery();
+		int nRows = command.ExecuteNonQuery();
 		Log.Verbose(string.Format("Number of rows inserted={0}", nRows));
 
 
