@@ -38,7 +38,7 @@ internal class YoutubeAPIs
 			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream).ConfigureAwait(false)).Secrets,
 				// This OAuth 2.0 access scope allows for full read/write access to the
 				// authenticated user's account.
-				new[] { YouTubeService.Scope.Youtube},
+				new[] { YouTubeService.Scope.Youtube },
 				"user",
 				CancellationToken.None,
 				new FileDataStore(GetType().ToString())
