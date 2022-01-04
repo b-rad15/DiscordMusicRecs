@@ -799,7 +799,7 @@ internal class Database
 	{
 		NpgsqlDataReader reader = await ExecuteQuery($"SELECT channel_id FROM {tableName};").ConfigureAwait(false);
 		await using ConfiguredAsyncDisposable _ = reader.ConfigureAwait(false);
-		List<ulong> channelIDs = new List<ulong>();
+		List<ulong> channelIDs = new();
 		while (await reader.ReadAsync().ConfigureAwait(false)) yield return (ulong)reader.GetDecimal(1);
 	}
 	

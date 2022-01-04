@@ -11,14 +11,6 @@ namespace DiscordMusicRecs
 	{
 		public string Token { get; set; } = null!;
 		public Postgres PostgresConfig { get; set; } = null!;
-
-		public static Configuration ReadConfig(string congigPath = "config.json")
-		{
-			string jsonstring = File.ReadAllText(congigPath);
-			Configuration configuration = JsonSerializer.Deserialize<Configuration>(jsonstring) ?? throw new InvalidOperationException("Configuration cannot be null");
-			return configuration;
-		}
-
 		public class Postgres
 		{
 			public string Host { get; set; } = null!;
@@ -28,6 +20,14 @@ namespace DiscordMusicRecs
 			public string DbName { get; set; } = null!;
 			public string MainTableName { get; set; } = null!;
 			public string LogTableName { get; set; } = null!;
+		}
+		public string InviteUrl { get; set; } = null!;
+		public string YoutubeSecretsFile { get; set; } = null!;
+		public static Configuration ReadConfig(string congigPath = "config.json")
+		{
+			string jsonstring = File.ReadAllText(congigPath);
+			Configuration configuration = JsonSerializer.Deserialize<Configuration>(jsonstring) ?? throw new InvalidOperationException("Configuration cannot be null");
+			return configuration;
 		}
 	}
 }

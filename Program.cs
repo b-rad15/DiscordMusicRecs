@@ -321,7 +321,7 @@ internal class Program
         // {
         //     await Database.Instance.MakePlaylistTable(playlistId);
         // }
-        await YoutubeAPIs.Instance.Initialize().ConfigureAwait(false);
+        await YoutubeAPIs.Instance.InitializeAutomatic().ConfigureAwait(false);
         await HelperFunctions.UpdateTimeBasedPlaylists().ConfigureAwait(false);
         await HelperFunctions.PopulateTimeBasedPlaylists().ConfigureAwait(false);
         var dailyTimer = new Timer
