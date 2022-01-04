@@ -25,9 +25,11 @@ namespace DiscordMusicRecs;
 
 public class RequireBotAdminPrivilegeAttribute : SlashCheckBaseAttribute
 {
-    private const string PermissionsTableName = "server_permissions";
-
-    public RequireBotAdminPrivilegeAttribute(ulong userId, Permissions permissions, bool ignoreDms = true)
+	//TODO: Use this table
+#pragma warning disable IDE0051 // Remove unused private members
+	private const string PermissionsTableName = "server_permissions";
+#pragma warning restore IDE0051 // Remove unused private members
+	public RequireBotAdminPrivilegeAttribute(ulong userId, Permissions permissions, bool ignoreDms = true)
     {
         UserId = userId;
         Permissions = permissions;
@@ -81,8 +83,8 @@ public class SlashCommands : ApplicationCommandModule
     public async Task HelpDiscordRecsBotCommand(InteractionContext ctx)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-        var msg = new DiscordWebhookBuilder();
-        var embed = new DiscordEmbedBuilder
+        DiscordWebhookBuilder msg = new();
+        DiscordEmbedBuilder embed = new()
         {
             Color = DiscordColor.Red,
             Title = $"How Do I Use {Program.Discord.CurrentUser.Username} <:miihinotes:913303041057390644>"
@@ -170,26 +172,26 @@ public class SlashCommands : ApplicationCommandModule
 
     private const string GithubLink = "https://github.com/b-rad15/DiscordMusicRecs";
     [SlashCommand("github", "Get the link to the Github Repo for Discord Music Recs")]
-    public async Task GetGithubLink(InteractionContext ctx)
+    public static async Task GetGithubLink(InteractionContext ctx)
     {
 	    await ctx.CreateResponseAsync(GithubLink).ConfigureAwait(false);
     }
 
     private static readonly string[] DonateLinks = { "https://ko-fi.com/bradocon" };
     [SlashCommand("donate", "Prints all links to donate to the bot owner")]
-    public async Task GetDonateLinks(InteractionContext ctx)
+    public static async Task GetDonateLinks(InteractionContext ctx)
     {
 	    await ctx.CreateResponseAsync(string.Join('\n', DonateLinks)).ConfigureAwait(false);
     }
 
     [SlashCommand("GetRanking",
         "Gets the users' ranking of this playlist")]
-    public async Task GetRankedPlaylist(InteractionContext ctx,
+    public static async Task GetRankedPlaylist(InteractionContext ctx,
         [Option("PlaylistChannel", "Channel to rank results from")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-        Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: playlistChannel.Id).ConfigureAwait(false);
-        var msg = new DiscordWebhookBuilder();
+        Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(channelId: playlistChannel.Id).ConfigureAwait(false);
+        DiscordWebhookBuilder msg = new();
         if (rowData?.PlaylistId is null)
         {
 	        msg.WithContent($"{playlistChannel.Mention} has no playlists");
@@ -198,7 +200,7 @@ public class SlashCommands : ApplicationCommandModule
         }
 
         List<Database.VideoData> sortedPlaylistItems = await Database.Instance.GetRankedPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
-        var embedBuilder = new DiscordEmbedBuilder
+        DiscordEmbedBuilder embedBuilder = new()
         {
             Title = $"{playlistChannel.Name}'s Top Tracks"
         };
@@ -222,15 +224,14 @@ public class SlashCommands : ApplicationCommandModule
     }
 
     [SlashCommand("randomrec", "Gives a random recommendation from the specified channel's playlist")]
-    public async Task RandomRec(InteractionContext ctx,
+    public static async Task RandomRec(InteractionContext ctx,
         [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
         DiscordWebhookBuilder msg = new();
         try
         {
-            Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName,
-	            serverId: ctx.Guild.Id,
+            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 	            channelId: playlistChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
@@ -265,14 +266,14 @@ public class SlashCommands : ApplicationCommandModule
     }
 
     [SlashCommand("recsplaylist", "List the playlist that is bound to the given channel")]
-    public async Task GetRecsPlaylist(InteractionContext ctx,
+    public static async Task GetRecsPlaylist(InteractionContext ctx,
         [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
         DiscordWebhookBuilder msg = new();
         try
         {
-            Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 	            channelId: playlistChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
@@ -313,7 +314,7 @@ public class SlashCommands : ApplicationCommandModule
 
         [SlashCommand("addplaylist", "Adds channel to watch with a new playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-        public async Task AddPlaylist(InteractionContext ctx,
+        public static async Task AddPlaylist(InteractionContext ctx,
             [Option("BindChannel", "Channel to bind to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel,
             [Option("PlaylistTitle", "The title of the playlist")] string? playlistTitle = null,
             [Option("PlaylistDescription", "The description of the playlist")] string? playlistDescription = null,
@@ -467,7 +468,7 @@ public class SlashCommands : ApplicationCommandModule
 
         [SlashCommand("moveplaylist", "Moves existing watch from one channel to another")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-        public async Task MovePlaylist(InteractionContext ctx,
+        public static async Task MovePlaylist(InteractionContext ctx,
             [Option("OriginalChannel", "Channel to move the playlist from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel originalChannel,
             [Option("BindChannel", "Channel to bind the playlist to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel)
         {
@@ -482,7 +483,7 @@ public class SlashCommands : ApplicationCommandModule
 
             try
             {
-                Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+                Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 	                channelId: originalChannel.Id).ConfigureAwait(false);
                 if (rowData is null)
                 {
@@ -495,7 +496,7 @@ public class SlashCommands : ApplicationCommandModule
                     await Database.Instance.ChangeChannelId(Database.MainTableName, originalChannel.Id, bindChannel.Id).ConfigureAwait(false);
                 if (!wasChanged) Log.Error($"Fuck, {new StackFrame().GetFileLineNumber()}");
 
-                rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+                rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 	                channelId: bindChannel.Id).ConfigureAwait(false);
                 if (rowData is null)
                 {
@@ -529,14 +530,14 @@ public class SlashCommands : ApplicationCommandModule
 
         [SlashCommand("deleteplaylist", "Remove channel watch&optionally delete playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-        public async Task DeletePlaylist(InteractionContext ctx,
+        public static async Task DeletePlaylist(InteractionContext ctx,
             [Option("WatchChannel", "Channel to remove watch from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
             [Option("DeletePlaylist", "Should the playlist be deleted?")] bool shouldDeletePlaylist = true)
         {
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
             Database.PlaylistData? rowData =
-                await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+                await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 	                channelId: watchChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
@@ -624,7 +625,7 @@ public class SlashCommands : ApplicationCommandModule
         [SlashCommand("deletevideo",
 	        "Removes given video from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-        public async Task DeleteVideo(InteractionContext ctx,
+        public static async Task DeleteVideo(InteractionContext ctx,
 	        [Option("PlaylistChannel", "Channel that the playlist is bound to")]
 	        [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
 	        DiscordChannel watchChannel,
@@ -632,14 +633,14 @@ public class SlashCommands : ApplicationCommandModule
 	        string videoUrl)
         {
 	        await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-	        var msg = new DiscordWebhookBuilder();
+	        DiscordWebhookBuilder msg = new();
 	        Match? match;
 	        if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(videoUrl)).Success &&
 	            match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
 	            !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
 	        {
 		        string id = match.Groups["id"].Value;
-		        Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id,
+		        Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
 			        channelId: watchChannel.Id).ConfigureAwait(false);
 		        if (rowData?.PlaylistId is null)
 		        {
@@ -686,14 +687,15 @@ public class SlashCommands : ApplicationCommandModule
         [SlashCommand("deleteallfromuser",
             "Removes all videos submitted by mentioned user from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-        public async Task DeleteAllFromUser(InteractionContext ctx,
+		[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Used Upstream")]
+		public static async Task DeleteAllFromUser(InteractionContext ctx,
             [Option("PlaylistChannel", "Channel that the playlist is bound to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
             [Option("User", "The user to delete all from")] DiscordUser badUser,
 	        [Option("DeleteSubmissionMessages", "Delete User's Messages? If not, submissions will only be deleted from the playlist, not the channel")] bool deleteMessage = true)
         {
             await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-            var msg = new DiscordWebhookBuilder();
-            Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, serverId: ctx.Guild.Id, channelId: watchChannel.Id).ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id, channelId: watchChannel.Id).ConfigureAwait(false);
             if (rowData?.PlaylistId is null)
             {
                 msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");

@@ -14,6 +14,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Http;
 using Google.Apis.Services;
@@ -33,15 +34,16 @@ namespace DiscordMusicRecs;
 internal class YoutubeAPIs
 {
 	[SuppressMessage("ReSharper", "InconsistentNaming")]
-	internal class YouTubeClientSecret
+	[SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Must Match Json")]
+    internal class YouTubeClientSecret
 	{
-		public string client_id { get; set; }
-		public string project_id { get; set; }
-		public string auth_uri { get; set; }
-		public string token_uri { get; set; }
-		public string auth_provider_x509_cert_url { get; set; }
-		public string client_secret { get; set; }
-		public string[] redirect_uris { get; set; }
+		public string client_id { get; set; } = null!;
+		public string project_id { get; set; } = null!;
+        public string auth_uri { get; set; } = null!;
+		public string token_uri { get; set; } = null!;
+		public string auth_provider_x509_cert_url { get; set; } = null!;
+		public string client_secret { get; set; } = null!;
+		public string[] redirect_uris { get; set; } = null!;
 
 		public static async Task<YouTubeClientSecret> ReadFromFileAsync(string secretsFilePath) =>
 			await ReadFromFileAsync(new FileInfo(secretsFilePath)).ConfigureAwait(false);
@@ -53,7 +55,7 @@ internal class YoutubeAPIs
 			YouTubeClientSecret? secretsData = await JsonSerializer.DeserializeAsync<YouTubeClientSecret>(secretsFileStream).ConfigureAwait(false);
 			if (secretsData == null)
 			{
-				if (secretsFile.Length == 0) throw new ArgumentException("Secrets File contained no valid data");
+				throw new ArgumentException("Secrets File contained no valid data");
 			}
 			return secretsData;
 		}
@@ -65,7 +67,7 @@ internal class YoutubeAPIs
 				JsonSerializer.Deserialize<YouTubeClientSecret>(File.ReadAllText(secretsFile.FullName));
 			if (secretsData == null)
 			{
-				if (secretsFile.Length == 0) throw new ArgumentException("Secrets File contained no valid data");
+				throw new ArgumentException("Secrets File contained no valid data");
 			}
 			return secretsData;
 		}
@@ -79,7 +81,7 @@ internal class YoutubeAPIs
     private Playlist? recommendationPlaylist;
 	private YouTubeService? youTubeService;
 	private bool initialized = false;
-	private UserCredential credential;
+	private UserCredential credential = null!;
 	public async Task InitializeAutomatic()
 	{
 		FileStream stream = new("client_secret_youtube.json", FileMode.Open, FileAccess.Read);
@@ -127,7 +129,7 @@ internal class YoutubeAPIs
 		{
 			ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}",
             DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.UnsuccessfulResponse503 | ExponentialBackOffPolicy.Exception,
-            // HttpClientInitializer = new UserCredential(new AuthorizationCodeInstalledApp(), creds.User, new TokenResponse())
+            // HttpClientInitializer = new UserCredential(new GoogleAuthorizationCodeFlow(), creds.User, new TokenResponse())
 		});
 		initialized = true;
     }
@@ -190,7 +192,7 @@ internal class YoutubeAPIs
         byte[] buffer = Encoding.UTF8.GetBytes(responseString);
         response.ContentLength64 = buffer.Length;
         Stream responseOutput = response.OutputStream;
-        await responseOutput.WriteAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+        await responseOutput.WriteAsync(buffer).ConfigureAwait(false);
         responseOutput.Close();
         http.Stop();
         Log.Information("HTTP server stopped.");

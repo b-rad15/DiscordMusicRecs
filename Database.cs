@@ -279,6 +279,7 @@ internal class Database
 	    return nRows;
     }
 
+	//TODO: Fix filtering for specific "optional" categories or make them required
     public async Task<int> UpdateVotes(string? videoId = null, ulong? messageId = null, ulong? channelId = null, string? playlistId = null,
         short? upvotes = null, short? downvotes = null)
     {
@@ -317,7 +318,7 @@ internal class Database
             throw new ArgumentNullException(nameof(playlistId));
         }
 
-        var command = new NpgsqlCommand
+        NpgsqlCommand command = new()
         {
             Connection = Connection
         };
@@ -419,7 +420,7 @@ internal class Database
 
     }
 
-    public async Task<PlaylistData?> GetRowData(string tableName, ulong? serverId = null, ulong? channelId = null,
+    public async Task<PlaylistData?> GetPlaylistsRowData(ulong? serverId = null, ulong? channelId = null,
 	    string? playlistId = null)
     {
 	    DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
@@ -733,7 +734,7 @@ internal class Database
     }
 	public async Task InsertRow(string tableName, ulong serverId, string playlistId, string weeklyPlaylistId, string monthlyPlaylistId, string yearlyPlaylistId, ulong? channelId = null, DateTime? timeCreated = null)
 	{
-		var playlistData = new PlaylistData
+		PlaylistData playlistData = new()
 		{
 			ChannelId = channelId, 
 			IsConnectedToChannel = channelId is not null, 
@@ -763,8 +764,8 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	public async Task<string> GetPlaylistId(string tableName, ulong channelId)
     {
-	    var command = new NpgsqlCommand
-        {
+	    NpgsqlCommand command = new()
+	    {
             CommandText = $"SELECT playlist_id FROM {tableName} WHERE channel_id=@channelId;",
 			Connection = Connection,
         };
@@ -809,8 +810,8 @@ internal class Database
 			.UpdateAsync(pa => new PlaylistData { ChannelId = newChannel }).ConfigureAwait(false);
 		return nRows > 0;
 		//TODO: Learn how to use update statement with Entity Framework Core (Maybe I did with Entity Framework Plus Library)
-		var command =
-            new NpgsqlCommand
+		NpgsqlCommand command =
+            new()
             {
                 CommandText = $"UPDATE {tableName} SET channel_id = @newChannel WHERE channel_id = @originalChannel;"
             };
@@ -844,7 +845,7 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	private async Task ExecuteNonQuery(string commandString)
 	{
-		var command = new NpgsqlCommand(commandString, Connection);
+		NpgsqlCommand command = new(commandString, Connection);
 		await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
 		await command.ExecuteNonQueryAsync().ConfigureAwait(false);
 	}
@@ -852,7 +853,7 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	private async Task<NpgsqlDataReader> ExecuteQuery(string commandString)
 	{
-		var command = new NpgsqlCommand(commandString, Connection);
+		NpgsqlCommand command = new(commandString, Connection);
 		await using ConfiguredAsyncDisposable _ = command.ConfigureAwait(false);
 		Console.WriteLine(commandString);
 		return await command.ExecuteReaderAsync().ConfigureAwait(false);
@@ -861,14 +862,14 @@ internal class Database
 	[Obsolete("Uses old database format", true)]
 	private void Other()
 	{
-		using var command1 =
-		       new NpgsqlCommand("CREATE TABLE inventory(id serial PRIMARY KEY, name VARCHAR(50), quantity INTEGER);",
+		using NpgsqlCommand command1 =
+		       new("CREATE TABLE inventory(id serial PRIMARY KEY, name VARCHAR(50), quantity INTEGER);",
 			       Connection);
 		command1.ExecuteNonQuery();
 		Log.Verbose("Finished creating table");
 
-		using var command =
-		       new NpgsqlCommand("INSERT INTO inventory (name, quantity) VALUES (@n1, @q1), (@n2, @q2), (@n3, @q3);",
+		using NpgsqlCommand command =
+		       new("INSERT INTO inventory (name, quantity) VALUES (@n1, @q1), (@n2, @q2), (@n3, @q3);",
 			       Connection);
 		command.Parameters.AddWithValue("n1", "banana");
 		command.Parameters.AddWithValue("q1", 150);

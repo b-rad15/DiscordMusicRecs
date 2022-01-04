@@ -88,7 +88,7 @@ internal class Program
 
     public static async Task HandleDeletedChannel(ulong channelId, bool shouldDeletePlaylist = true, Database.PlaylistData? rowData = null)
     {
-	    rowData ??= await Database.Instance.GetRowData(Database.MainTableName, channelId: channelId).ConfigureAwait(false);
+	    rowData ??= await Database.Instance.GetPlaylistsRowData(channelId: channelId).ConfigureAwait(false);
 	    if (rowData is null)
 	    {
             //No Row Exists for given channel, no playlist to delete
@@ -159,7 +159,7 @@ internal class Program
                 Log.Error("Ok which one of you added this method to another event?");
                 return;
         }
-	    Database.PlaylistData? rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: message.ChannelId).ConfigureAwait(false);
+	    Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(channelId: message.ChannelId).ConfigureAwait(false);
 	    if (rowData?.PlaylistId is null)
 	    {
 		    return;
@@ -190,7 +190,7 @@ internal class Program
                 Database.PlaylistData? rowData = null;
                 try
                 {
-                    rowData = await Database.Instance.GetRowData(Database.MainTableName, channelId: e.Channel.Id).ConfigureAwait(false);
+                    rowData = await Database.Instance.GetPlaylistsRowData(channelId: e.Channel.Id).ConfigureAwait(false);
                     recsChannelId = rowData?.ChannelId; //null if rowData is null otherwise channelId
                 }
                 catch (Exception exception)
@@ -273,7 +273,7 @@ internal class Program
                             else
                             {
                                 Log.Error(exception.ToString());
-                                Log.Error($"Video that didn't work Id: {id} to playlist {playlistId}");
+                                Log.Error($"Video that didn't work Id: {id} to playlist set {playlistId}");
                                 DiscordMessage? badMessage = await Discord.SendMessageAsync(e.Channel, "Failed to add video to playlists").ConfigureAwait(false);
                                 await Task.Delay(5000).ConfigureAwait(false);
                                 await badMessage.DeleteAsync().ConfigureAwait(false);
@@ -322,16 +322,16 @@ internal class Program
         //     await Database.Instance.MakePlaylistTable(playlistId);
         // }
         await YoutubeAPIs.Instance.InitializeAutomatic().ConfigureAwait(false);
-        await HelperFunctions.UpdateTimeBasedPlaylists().ConfigureAwait(false);
+        await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
         await HelperFunctions.PopulateTimeBasedPlaylists().ConfigureAwait(false);
-        var dailyTimer = new Timer
+        Timer dailyTimer = new()
         {
 	        AutoReset = true,
 	        Enabled = true,
 	        Interval = TimeSpan.FromDays(1).TotalMilliseconds
         };
         dailyTimer.Start();
-        dailyTimer.Elapsed += async (_, _) => await HelperFunctions.UpdateTimeBasedPlaylists().ConfigureAwait(false);
+        dailyTimer.Elapsed += async (_, _) => await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
         if (args.Length > 0 && args[0] is "--removeNonUrls" or "--nochatting" or "--no-chatting") removeNonUrls = true; 
 
         MainAsync(args).GetAwaiter().GetResult();

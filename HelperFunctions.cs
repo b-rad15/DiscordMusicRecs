@@ -11,33 +11,32 @@ namespace DiscordMusicRecs
 {
 	internal static class HelperFunctions
 	{
-		public static async Task<int> UpdateTimeBasedPlaylists()
+		public static async Task<int> RemoveOldItemsFromTimeBasedPlaylists()
 		{
 			DateTime runTime = DateTime.Now;
-			List<Database.PlaylistData> playlists = await Database.Instance.GetRowsData().ConfigureAwait(false);
-			int counter = 0;
+			int count = 0;
 			List<string> videosToRemoveWeekly = await Database.Instance.GetPlaylistItemsToRemoveWeekly(runTime).ConfigureAwait(false);
 			foreach (string video in videosToRemoveWeekly)
 			{
 				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
-				++counter;
+				++count;
 			}
 			await Database.Instance.NullAllWeeklyPlaylistItem(runTime).ConfigureAwait(false);
 			List<string> videosToRemoveMonthly = await Database.Instance.GetPlaylistItemsToRemoveMonthly(runTime).ConfigureAwait(false);
 			foreach (string video in videosToRemoveMonthly)
 			{
 				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
-				++counter;
+				++count;
 			}
 			await Database.Instance.NullAllMonthlyPlaylistItem(runTime).ConfigureAwait(false);
 			List<string> videosToRemoveYearly = await Database.Instance.GetPlaylistItemsToRemoveMonthly(runTime).ConfigureAwait(false);
 			foreach (string video in videosToRemoveYearly)
 			{
 				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
-				++counter;
+				++count;
 			}
-			await Database.Instance.NullAllYearlyPlaylistItem(runTime ).ConfigureAwait(false);
-			return counter;
+			await Database.Instance.NullAllYearlyPlaylistItem(runTime).ConfigureAwait(false);
+			return count;
 		}
 
 		public static async Task<int> PopulateTimeBasedPlaylists()
