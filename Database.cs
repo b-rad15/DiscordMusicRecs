@@ -6,17 +6,20 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net.Http.Headers;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using DSharpPlus.Entities;
 using Google.Apis.YouTube.v3.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 using Serilog;
@@ -24,6 +27,8 @@ using Z.EntityFramework.Plus;
 
 namespace DiscordMusicRecs;
 
+[SuppressMessage("ReSharper", "MergeIntoPattern")]
+[SuppressMessage("ReSharper", "ReplaceWithStringIsNullOrEmpty")]
 internal class Database
 {
 	// Obtain connection string information from the portal
@@ -66,6 +71,18 @@ internal class Database
 		public string PlaylistId { get; set; } = null!;
 		public PlaylistData Playlist { get; set; } = null!;
 	}
+
+	public readonly struct VideoDataAndContext
+	{
+		public readonly VideoData VideoData;
+		public readonly DiscordDatabaseContext Context;
+
+		public VideoDataAndContext(ref VideoData videoData, ref DiscordDatabaseContext context)
+		{
+			VideoData = videoData;
+			Context = context;
+		}
+	}
 	public class PlaylistData
 	{
 		public ulong ServerId { get; set; }
@@ -84,6 +101,18 @@ internal class Database
 		//Relation
 		public List<VideoData> Videos { get; set; } = null!;
 	}
+
+	public readonly struct PlaylistDatasAndContext
+	{
+		public readonly IEnumerable<PlaylistData> PlaylistDatas;
+		public readonly DiscordDatabaseContext Context;
+
+		public PlaylistDatasAndContext(ref List<PlaylistData> playlistDatas, ref DiscordDatabaseContext context)
+		{
+			PlaylistDatas = playlistDatas;
+			Context = context;
+		}
+	}
 	public class DiscordDatabaseContext : DbContext
 	{
 		//TODO: Enable AutoHistory https://github.com/Arch/AutoHistory
@@ -97,13 +126,12 @@ internal class Database
 				.UseNpgsql(
 					BaseConnectionString,
 					options => options
-						.EnableRetryOnFailure()
 						.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)
 						.UseAdminDatabase("postgres")
 						.EnableRetryOnFailure(5))
 				.UseSnakeCaseNamingConvention()
-				.LogTo(Log.Verbose)
-				.EnableSensitiveDataLogging();
+				.LogTo(Log.Verbose, LogLevel.Information)
+                .EnableSensitiveDataLogging();
 		#region Required
 		protected override void OnModelCreating(ModelBuilder modelBuilder)
 		{
@@ -125,8 +153,7 @@ internal class Database
 			builder
 				.Property(vd => vd.TimeSubmitted)
 				.IsRequired()
-				.HasDefaultValueSql("CURRENT_TIMESTAMP")
-				.HasColumnType("timestamp"); ;
+				.HasDefaultValueSql("CURRENT_TIMESTAMP");
 			builder
 				.Property(vd => vd.MessageId)
 				.IsRequired();
@@ -138,13 +165,13 @@ internal class Database
 				.Property(vd => vd.Upvotes)
 				.IsRequired()
 				.HasDefaultValue(0);
-			builder
-				.Property(vd => vd.Downvotes)
-				.IsRequired()
-				.HasDefaultValue(0);
-			builder
-				.HasOne(video => video.PlaylistId)
-				.WithMany();
+			// builder
+			// 	.Property(vd => vd.Downvotes)
+			// 	.IsRequired()
+			// 	.HasDefaultValue(0);
+			// builder
+			// 	.HasOne(video => video.PlaylistId)
+			// 	.WithMany();
 			builder
 				.ToTable(LogTableName);
 		}
@@ -174,19 +201,18 @@ internal class Database
 				.IsRequired()
 				.HasDefaultValueSql("CURRENT_TIMESTAMP")
 				.HasColumnType("timestamp");
-			builder
-				.HasMany<VideoData>()
-				.WithOne(video => video.Playlist)
-				.IsRequired();
+			// builder
+			// 	.HasMany<VideoData>()
+			// 	.WithOne(video => video.Playlist)
+			// 	.IsRequired();
 			builder
 				.ToTable(MainTableName);
 		}
 	}
-
-    private readonly DiscordDatabaseContext database;
+	
     private Database()
 	{
-		database = new DiscordDatabaseContext();
+		// database = new DiscordDatabaseContext();
 	}
 
     public static Database Instance { get; } = new();
@@ -238,10 +264,15 @@ internal class Database
 		return conn;
 	}
 
-	internal async Task<int> SaveDatabase() => await database.SaveChangesAsync().ConfigureAwait(false);
+	internal async Task<int> SaveDatabase()
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.SaveChangesAsync().ConfigureAwait(false);
+	}
 
 	public async Task MakeServerTables()
 	{
+		await using DiscordDatabaseContext database = new();
 		await database.Database.MigrateAsync().ConfigureAwait(false);
 	}
 
@@ -255,14 +286,16 @@ internal class Database
 	
 	public async Task<List<string>> GetAllPlaylistIds(ulong? serverId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		return await database.PlaylistsAdded.Select(pa => pa.PlaylistId).ToListAsync().ConfigureAwait(false);
     }
 
     public async Task<int> AddVideoToPlaylistTable(string playlistId, string videoId, string playlistItemId,
 	    string weeklyPlaylistId, string monthlyPlaylistId, string yearlyPlaylistId, ulong? channelId, ulong userId,
 	    DateTimeOffset timeSubmitted, ulong messageId)
-    {
-	    await database.AddAsync(new VideoData
+	{
+		await using DiscordDatabaseContext database = new();
+		await database.AddAsync(new VideoData
 	    {
 		    VideoId = videoId,
 		    PlaylistItemId = playlistItemId,
@@ -271,7 +304,7 @@ internal class Database
 			YearlyPlaylistItemId = yearlyPlaylistId,
 		    ChannelId = channelId,
 		    UserId = userId,
-		    TimeSubmitted = timeSubmitted.DateTime,
+		    TimeSubmitted = timeSubmitted.DateTime.ToUniversalTime(),
 		    MessageId = messageId,
 		    PlaylistId = playlistId
 	    }).ConfigureAwait(false);
@@ -282,8 +315,9 @@ internal class Database
 	//TODO: Fix filtering for specific "optional" categories or make them required
     public async Task<int> UpdateVotes(string? videoId = null, ulong? messageId = null, ulong? channelId = null, string? playlistId = null,
         short? upvotes = null, short? downvotes = null)
-    {
-	    VideoData videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
+	{
+		await using DiscordDatabaseContext database = new();
+		VideoData videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
 		if (upvotes is not null)
 			videoItem.Upvotes = upvotes.Value;
 		if(downvotes is not null)
@@ -369,6 +403,7 @@ internal class Database
 	//TODO: Add variable selector
     public async Task<bool> CheckPlaylistChannelExists(string tableName, int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		PlaylistData? videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync().ConfigureAwait(false);
 		return videoItem != default(PlaylistData);
 
@@ -422,8 +457,9 @@ internal class Database
 
     public async Task<PlaylistData?> GetPlaylistsRowData(ulong? serverId = null, ulong? channelId = null,
 	    string? playlistId = null)
-    {
-	    DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
+	{
+		await using DiscordDatabaseContext database = new();
+		DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
 	    IQueryable<PlaylistData>? whereQuery = null;
         if (serverId is null && channelId is null && playlistId is null)
         {
@@ -476,6 +512,7 @@ internal class Database
 	}
 	internal async Task<List<PlaylistData>> GetRowsData(ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		DbSet<PlaylistData> rowBase = database.PlaylistsAdded;
 		IQueryable<PlaylistData>? whereQuery = null;
 		if (channelId is not null)
@@ -502,9 +539,10 @@ internal class Database
 		return rowData;
 	}
 
-	public async Task<int> DeletePlaylistItem(string playlistId, ulong? messageId = null,
+	public async Task<int> DeleteVideoSubmitted(string playlistId, ulong? messageId = null,
 		ulong? userId = null, string? videoId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		if (messageId is null && userId is null && videoId is null)
 		{
@@ -540,12 +578,14 @@ internal class Database
 
 	public async Task<int> DeletePlaylistData(PlaylistData rowData)
 	{
+		await using DiscordDatabaseContext database = new();
 		database.Remove(rowData);
 		return await database.SaveChangesAsync().ConfigureAwait(false);
 	}
 
 	public async Task<List<VideoData>> GetRankedPlaylistItems(string playlistId)
 	{
+		await using DiscordDatabaseContext database = new();
 		IOrderedQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
 		return await whereQuery.ToListAsync().ConfigureAwait(false);
 	}
@@ -553,12 +593,14 @@ internal class Database
 	//Remove All Videos from given playlist from the videos submitted table
 	public async Task<int> DeleteVideosSubmittedFromPlaylist(string playlistID)
 	{
+		await using DiscordDatabaseContext database = new();
 		return await database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistID).DeleteAsync().ConfigureAwait(false);
 	}
 	//TODO: Add selectors for other columns
 	//TODO: Replace returning null item with returning none and checking with .Any()
 	public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		// if (messageId is null && userId is null && videoId is null)
 		// {
@@ -580,110 +622,295 @@ internal class Database
 		return await GetPlaylistItemsUnsafe(whereQuery).ConfigureAwait(false);
 	}
 
-	internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(IQueryable<VideoData>? whereQuery = null) =>
-		await (whereQuery ?? database.VideosSubmitted).ToListAsync().ConfigureAwait(false);
+	internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(IQueryable<VideoData>? whereQuery = null)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await (whereQuery ?? database.VideosSubmitted).ToListAsync().ConfigureAwait(false);
+	}
 
-	internal async Task<List<VideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<VideoData, bool>> whereFunc) =>
-		await database.VideosSubmitted.Where(whereFunc).ToListAsync().ConfigureAwait(false);
+	internal async Task<List<VideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<VideoData, bool>> whereFunc)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted.Where(whereFunc).ToListAsync().ConfigureAwait(false);
+	}
+	#region PublicPopulates
 
-	private static Expression<Func<VideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null)
+	public static async Task<int> PopulateTimeBasedPlaylists()
+	{
+		int count = 0;
+		DateTime runTime = DateTime.Now;
+		count += await PopulateWeeklyPlaylist(runTime, true).ConfigureAwait(false);
+		count += await PopulateMonthlyPlaylist(runTime, true).ConfigureAwait(false);
+		count += await PopulateYearlyPlaylist(runTime, true).ConfigureAwait(false);
+		return count;
+	}
+
+	public static async Task<int> PopulateWeeklyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true, bool exactlyOneWeek = false)
+	{
+		DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		await using DiscordDatabaseContext database = new();
+		DateTime startOfWeek = exactlyOneWeek ? runTime.OneWeekAgo() : runTime.StartOfWeek(StartOfWeek);
+		//Add if not in a Weekly Playlist already and if the video was submitted after the start of the week
+		List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
+			video => (video.WeeklyPlaylistItemId == null ||
+			          video.WeeklyPlaylistItemId.Length == 0) &&
+			         startOfWeek <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+		// List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
+		// {
+		// 	PlaylistId = playlist.PlaylistId,
+		// 	WeeklyPlaylistID = playlist.WeeklyPlaylistID,
+		// 	Videos = playlist.Videos.Where(
+		// 			video => (video.WeeklyPlaylistItemId == null || 
+		// 			          video.WeeklyPlaylistItemId.Length == 0) &&
+		// 			         startOfWeek <= video.TimeSubmitted)
+		// 		.Select(video => new VideoData
+		// 		{
+		// 			WeeklyPlaylistItemId = video.WeeklyPlaylistItemId,
+		// 			VideoId = video.VideoId
+		// 		}).ToList()
+		// }).ToListAsync().ConfigureAwait(false);
+		int count = 0;
+		int nRows = 0;
+		foreach (PlaylistData playlistData in pld)
+		{
+			if (string.IsNullOrEmpty(playlistData.WeeklyPlaylistID))
+			{
+				playlistData.WeeklyPlaylistID = await YoutubeAPIs.Instance.MakeWeeklyPlaylist().ConfigureAwait(false);
+				playlistData.WeeklyTimeCreated = DateTime.Now.ToUniversalTime();
+			}
+			foreach (VideoData videoData in playlistData.Videos)
+			{
+				//TODO: Allow Making new playlist on error and handle that
+				PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.WeeklyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
+				videoData.WeeklyPlaylistItemId = playlistItem.Id;
+				++count;
+			}
+		}
+		nRows += await database.SaveChangesAsync().ConfigureAwait(false);
+		Log.Verbose($"Count: {count}, Rows Updated: {nRows}");
+		return count;
+	}
+
+	public static async Task<int> PopulateMonthlyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true)
+	{
+		DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		await using DiscordDatabaseContext database = new();
+		DateTime startOfMonth = runTime.StartOfMonth();
+		//Add if not in a Monthly Playlist already and if the video was submitted after the start of the week
+		List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
+			video => (video.MonthlyPlaylistItemId == null ||
+					  video.MonthlyPlaylistItemId.Length == 0) &&
+					 startOfMonth <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+		// List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
+		// {
+		// 	PlaylistId = playlist.PlaylistId,
+		// 	MonthlyPlaylistID = playlist.MonthlyPlaylistID,
+		// 	Videos = playlist.Videos.Where(
+		// 			video => (video.MonthlyPlaylistItemId == null || 
+		// 			          video.MonthlyPlaylistItemId.Length == 0) &&
+		// 			         startOfMonth <= video.TimeSubmitted)
+		// 		.Select(video => new VideoData
+		// 		{
+		// 			MonthlyPlaylistItemId = video.MonthlyPlaylistItemId,
+		// 			VideoId = video.VideoId
+		// 		}).ToList()
+		// }).ToListAsync().ConfigureAwait(false);
+		int count = 0;
+		int nRows = 0;
+		foreach (PlaylistData playlistData in pld)
+		{
+			if (string.IsNullOrEmpty(playlistData.MonthlyPlaylistID))
+			{
+				playlistData.MonthlyPlaylistID = await YoutubeAPIs.Instance.MakeMonthlyPlaylist().ConfigureAwait(false);
+				playlistData.MonthlyTimeCreated = DateTime.Now.ToUniversalTime();
+			}
+			foreach (VideoData videoData in playlistData.Videos)
+			{
+				//TODO: Allow Making new playlist on error and handle that
+				PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.MonthlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
+				videoData.MonthlyPlaylistItemId = playlistItem.Id;
+				++count;
+			}
+		}
+		nRows += await database.SaveChangesAsync().ConfigureAwait(false);
+		Log.Verbose($"Count: {count}, Rows Updated: {nRows}");
+		return count;
+	}
+
+	public static async Task<int> PopulateYearlyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true)
+	{
+		DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		await using DiscordDatabaseContext database = new();
+		DateTime startOfYear = runTime.StartOfYear();
+		//Add if not in a Yearly Playlist already and if the video was submitted after the start of the week
+		List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
+			video => (video.YearlyPlaylistItemId == null ||
+					  video.YearlyPlaylistItemId.Length == 0) &&
+					 startOfYear <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+		// List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
+		// {
+		// 	PlaylistId = playlist.PlaylistId,
+		// 	YearlyPlaylistID = playlist.YearlyPlaylistID,
+		// 	Videos = playlist.Videos.Where(
+		// 			video => (video.YearlyPlaylistItemId == null || 
+		// 			          video.YearlyPlaylistItemId.Length == 0) &&
+		// 			         startOfYear <= video.TimeSubmitted)
+		// 		.Select(video => new VideoData
+		// 		{
+		// 			YearlyPlaylistItemId = video.YearlyPlaylistItemId,
+		// 			VideoId = video.VideoId
+		// 		}).ToList()
+		// }).ToListAsync().ConfigureAwait(false);
+		int count = 0;
+		int nRows = 0;
+		foreach (PlaylistData playlistData in pld)
+		{
+			if (string.IsNullOrEmpty(playlistData.YearlyPlaylistID))
+			{
+				playlistData.YearlyPlaylistID = await YoutubeAPIs.Instance.MakeYearlyPlaylist().ConfigureAwait(false);
+				playlistData.YearlyTimeCreated = DateTime.Now.ToUniversalTime();
+			}
+			foreach (VideoData videoData in playlistData.Videos)
+			{
+				//TODO: Allow Making new playlist on error and handle that
+				PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.YearlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
+				videoData.YearlyPlaylistItemId = playlistItem.Id;
+				++count;
+			}
+		}
+		nRows += await database.SaveChangesAsync().ConfigureAwait(false);
+		Log.Verbose($"Count: {count}, Rows Updated: {nRows}");
+		return count;
+	}
+
+	#endregion
+	#region TimeBasedFuncs
+	//Weekly Add
+	private static Func<VideoData, bool> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = false)
 	{
 		DateTime dt = passedDateTime ?? DateTime.Now;
-		return video => video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length > 0 && video.TimeSubmitted < dt.StartOfWeek(StartOfWeek);
+		DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
+		//Add if not in a Weekly Playlist already and if the video was submitted after the start of the week
+		return video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && startOfWeek <= video.TimeSubmitted;
 	}
-	// private static Expression<Func<PlaylistData, bool>> WeeklySubmissionsToAddWithPlaylistDataFunc(DateTime? passedDateTime = null)
-	// {
-	//
-	// }
 	public const DayOfWeek StartOfWeek = DayOfWeek.Sunday;
-	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddWeekly(DateTime? passedDateTime = null)
-	{
-		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
-			new PlaylistData
-				{ PlaylistId = playlist.PlaylistId, WeeklyPlaylistID = playlist.WeeklyPlaylistID, Videos = playlist.Videos.Where(video =>
-				video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length > 0 && video.TimeSubmitted <
-				(passedDateTime ?? DateTime.Now).StartOfWeek(StartOfWeek)).Select(video => new VideoData{WeeklyPlaylistItemId = video.WeeklyPlaylistItemId, VideoId = video.VideoId}).ToList()
-		}).ToListAsync().ConfigureAwait(false);
-		return pld;
-	}
-	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddMonthly(DateTime? passedDateTime = null)
-	{
-		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
-			new PlaylistData
-				{ PlaylistId = playlist.PlaylistId, MonthlyPlaylistID = playlist.MonthlyPlaylistID, Videos = playlist.Videos.Where(video =>
-				video.MonthlyPlaylistItemId != null && video.MonthlyPlaylistItemId.Length > 0 && video.TimeSubmitted <
-				(passedDateTime ?? DateTime.Now).StartOfMonth()).Select(video => new VideoData{MonthlyPlaylistItemId = video.MonthlyPlaylistItemId, VideoId = video.VideoId}).ToList()
-		}).ToListAsync().ConfigureAwait(false);
-		return pld;
-	}
-	internal async Task<List<PlaylistData>> GetPlaylistItemsToAddYearly(DateTime? passedDateTime = null)
-	{
-		List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist =>
-			new PlaylistData
-				{ PlaylistId = playlist.PlaylistId, YearlyPlaylistID = playlist.YearlyPlaylistID, Videos = playlist.Videos.Where(video =>
-				video.YearlyPlaylistItemId != null && video.YearlyPlaylistItemId.Length > 0 && video.TimeSubmitted <
-				(passedDateTime ?? DateTime.Now).StartOfYear()).Select(video => new VideoData{YearlyPlaylistItemId = video.YearlyPlaylistItemId, VideoId = video.VideoId}).ToList()
-		}).ToListAsync().ConfigureAwait(false);
-		return pld;
-	}
-	private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null)
+
+	//Monthly Add
+	private static Expression<Func<VideoData, bool>> MonthlySubmissionsToAddFunc(DateTime? passedDateTime = null)
 	{
 		DateTime dt = passedDateTime ?? DateTime.Now;
-		return video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && video.TimeSubmitted < dt.StartOfWeek(StartOfWeek);
+		DateTime startOfMonth = dt.StartOfMonth();
+		//Add if not in a Monthly Playlist already and if the video was submitted after the start of the Month
+		return video => (video.MonthlyPlaylistItemId == null || video.MonthlyPlaylistItemId.Length == 0) && startOfMonth <= video.TimeSubmitted;
 	}
-	internal async Task<List<string>> GetPlaylistItemsToRemoveWeekly(DateTime? passedDateTime = null)
+
+	//Yearly Add
+	private static Expression<Func<VideoData, bool>> YearlySubmissionsToAddFunc(DateTime? passedDateTime = null)
 	{
-		return (await database.VideosSubmitted
+		DateTime dt = passedDateTime ?? DateTime.Now;
+		DateTime startOfYear = dt.StartOfYear();
+		//Add if not in a Yearly Playlist already and if the video was submitted after the start of the Year
+		return video => (video.YearlyPlaylistItemId == null || video.YearlyPlaylistItemId.Length == 0) && startOfYear <= video.TimeSubmitted;
+	}
+
+	//Weekly Remove
+	private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
+	{
+		DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
+		//Remove if in a valid Weekly Playlist already but the video was submitted before the start of the week
+		return video => (video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfWeek;
+	}
+	internal async Task<List<string?>> GetPlaylistItemsToRemoveWeekly(DateTime? passedDateTime = null)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted.Where(WeeklySubmissionsToRemoveFunc(passedDateTime,false)).Select(video => video.WeeklyPlaylistItemId).ToListAsync().ConfigureAwait(false);
+	}
+	internal async Task<int> NullOneWeeklyPlaylistItem(string playlistItemId)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
+			.Where(video => video.WeeklyPlaylistItemId == playlistItemId)
+			.UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
+	}
+
+	internal async Task<int> NullAllWeeklyPlaylistItem(DateTime? passedDateTime = null)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
 			.Where(WeeklySubmissionsToRemoveFunc(passedDateTime))
-			.Select(video => video.WeeklyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
-	}
-	internal async Task<int> NullOneWeeklyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
-		.Where(video=>video.WeeklyPlaylistItemId == playlistItemId)
-		.UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
-	internal async Task<int> NullAllWeeklyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
-		.Where(WeeklySubmissionsToRemoveFunc(passedDateTime))
-		.UpdateFromQueryAsync(video => new VideoData{WeeklyPlaylistItemId = null}).ConfigureAwait(false);
-
-	private static Expression<Func<VideoData, bool>> UnallowedMonthlySubmissionsFunc(DateTime? passedDateTime = null)
-	{
-		DateTime dt = passedDateTime ?? DateTime.Now;
-		return video => string.IsNullOrEmpty(video.MonthlyPlaylistItemId) && video.TimeSubmitted < dt.StartOfMonth();
+			.UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
 	}
 
-	internal async Task<List<string>> GetPlaylistItemsToRemoveMonthly(DateTime? passedDateTime = null)
+	//Monthly Remove
+	private static Expression<Func<VideoData, bool>> MonthlySubmissionsToRemoveFunc(DateTime? passedDateTime = null)
 	{
+		DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		DateTime startOfMonth = dt.StartOfMonth();
+		//Remove if in a valid Monthly Playlist already but the video was submitted before the start of the Month
+		return video => (video.MonthlyPlaylistItemId != null && video.MonthlyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfMonth;
+	}
+
+	internal async Task<List<string?>> GetPlaylistItemsToRemoveMonthly(DateTime? passedDateTime = null)
+	{
+		await using DiscordDatabaseContext database = new();
 		return (await database.VideosSubmitted
-			.Where(UnallowedMonthlySubmissionsFunc(passedDateTime))
+			.Where(MonthlySubmissionsToRemoveFunc(passedDateTime))
 			.Select(video => video.MonthlyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
 	}
 
-	internal async Task<int> NullOneMonthlyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
-		.Where(video => video.MonthlyPlaylistItemId == playlistItemId)
-		.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
-	internal async Task<int> NullAllMonthlyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
-		.Where(UnallowedMonthlySubmissionsFunc(passedDateTime))
-		.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
-
-
-	private static Expression<Func<VideoData, bool>> UnallowedYearlySubmissionsFunc(DateTime? passedDateTime = null)
+	internal async Task<int> NullOneMonthlyPlaylistItem(string playlistItemId)
 	{
-		DateTime dt = passedDateTime ?? DateTime.Now;
-		return video => string.IsNullOrEmpty(video.YearlyPlaylistItemId) && video.TimeSubmitted < dt.StartOfYear();
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
+			.Where(video => video.MonthlyPlaylistItemId == playlistItemId)
+			.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
 	}
-	internal async Task<List<string>> GetPlaylistItemsToRemoveYearly(DateTime? passedDateTime = null)
+
+	internal async Task<int> NullAllMonthlyPlaylistItem(DateTime? passedDateTime = null)
 	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
+			.Where(MonthlySubmissionsToRemoveFunc(passedDateTime))
+			.UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
+	}
+
+
+	//Yearly Remove
+	private static Expression<Func<VideoData, bool>> YearlySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
+	{
+		DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
+		DateTime startOfYear = dt.StartOfYear();
+		//Remove if in a valid Yearly Playlist already but the video was submitted before the start of the Year
+		return video => (video.YearlyPlaylistItemId != null && video.YearlyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfYear;
+	}
+	internal async Task<List<string?>> GetPlaylistItemsToRemoveYearly(DateTime? passedDateTime = null)
+	{
+		await using DiscordDatabaseContext database = new();
 		return (await database.VideosSubmitted
-			.Where(UnallowedYearlySubmissionsFunc(passedDateTime))
+			.Where(YearlySubmissionsToRemoveFunc(passedDateTime))
 			.Select(video => video.YearlyPlaylistItemId).ToListAsync().ConfigureAwait(false))!;
 	}
-	internal async Task<int> NullOneYearlyPlaylistItem(string playlistItemId) => await database.VideosSubmitted
-		.Where(video => video.YearlyPlaylistItemId == playlistItemId)
-		.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
-	internal async Task<int> NullAllYearlyPlaylistItem(DateTime? passedDateTime = null) => await database.VideosSubmitted
-		.Where(UnallowedYearlySubmissionsFunc(passedDateTime))
-		.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+	internal async Task<int> NullOneYearlyPlaylistItem(string playlistItemId)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
+			.Where(video => video.YearlyPlaylistItemId == playlistItemId)
+			.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+	}
+
+	internal async Task<int> NullAllYearlyPlaylistItem(DateTime? passedDateTime = null)
+	{
+		await using DiscordDatabaseContext database = new();
+		return await database.VideosSubmitted
+			.Where(YearlySubmissionsToRemoveFunc(passedDateTime))
+			.UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+	}
+
+#endregion
 	public async Task<VideoData?> GetPlaylistItem(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
 	{
+		await using DiscordDatabaseContext database = new();
 		IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
 		if (messageId is null && userId is null && videoId is null)
 		{
@@ -705,7 +932,7 @@ internal class Database
 		try
 		{
 
-			VideoData rowData = await whereQuery.FirstAsync().ConfigureAwait(false);
+			VideoData rowData = await whereQuery.FirstOrDefaultAsync().ConfigureAwait(false);
 			return rowData;
 		}
 		catch (InvalidOperationException)
@@ -722,6 +949,7 @@ internal class Database
 	//Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel
 	public async Task<bool> DeleteRowWithServer(string tableName, ulong serverId, ulong channelId)
 	{
+		await using DiscordDatabaseContext database = new();
 		int nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false);
 		return nRows > 0;
 	}
@@ -730,6 +958,7 @@ internal class Database
 	//Deletes all rows with given channel Id from the watch list table
 	public async Task<bool> DeleteRow(string tableName, ulong channelId)
 	{
+		await using DiscordDatabaseContext database = new();
 		return await database.PlaylistsAdded.Where(pa => pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false) > 0;
     }
 	public async Task InsertRow(string tableName, ulong serverId, string playlistId, string weeklyPlaylistId, string monthlyPlaylistId, string yearlyPlaylistId, ulong? channelId = null, DateTime? timeCreated = null)
@@ -756,6 +985,7 @@ internal class Database
 	}
 	public async Task InsertRow(PlaylistData playlistData)
 	{
+		await using DiscordDatabaseContext database = new();
 		await database.PlaylistsAdded.AddAsync(playlistData).ConfigureAwait(false);
 		await database.SaveChangesAsync().ConfigureAwait(false);
 	}
@@ -806,6 +1036,7 @@ internal class Database
 	
 	public async Task<bool> ChangeChannelId(string tableName, ulong originalChannel, ulong newChannel)
 	{
+		await using DiscordDatabaseContext database = new();
 		int nRows = await database.PlaylistsAdded.Where(pa => pa.ChannelId == originalChannel)
 			.UpdateAsync(pa => new PlaylistData { ChannelId = newChannel }).ConfigureAwait(false);
 		return nRows > 0;
@@ -827,6 +1058,7 @@ internal class Database
 	[Obsolete("Verify that playlists are created when added, otherwise rerun addplaylist")]
 	public async Task ChangePlaylistId(ulong serverId, ulong channelId, string newPlaylistId, string oldPlaylistId)
 	{
+		await using DiscordDatabaseContext database = new();
 		int nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId && pa.PlaylistId == oldPlaylistId)
 			.UpdateAsync(pa => new PlaylistData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
 		if (nRows == 0)

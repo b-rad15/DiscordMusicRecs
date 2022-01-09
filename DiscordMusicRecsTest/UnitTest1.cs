@@ -28,6 +28,7 @@ namespace DiscordMusicRecsTest
 		[InlineData("https://music.youtu.be/Z_Al0GXbCm8", true, "Z_Al0GXbCm8")]
 		[InlineData("https://m.youtu.be/Z_Al0GXbCm8", true, "Z_Al0GXbCm8")]
 		[InlineData("https://www.youtube.com/embed/IL5mHJYcE5I", true, "IL5mHJYcE5I")]
+		[InlineData("https://youtu.be/TiiHkWJu3mE?list=TLPQMDQwMTIwMjJbC7IBwSDt8Q", true, "TiiHkWJu3mE")]
 		[InlineData("https://yout.be/Z_Al0GXbCm8", false)]
 		[InlineData("https://youtube/Z_Al0GXbCm8", false)]
 		[InlineData("https://www.youtube.com/v=vPwaXytZcgI", false)]

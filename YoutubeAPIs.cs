@@ -13,6 +13,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Google;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
@@ -105,9 +106,8 @@ internal class YoutubeAPIs
 
 
 
-
-
-	public struct UserAndAccessToken
+#if manualYoutubeAPIAuth
+    public struct UserAndAccessToken
 	{
         public string User { get; }
         public string AccessToken { get; }
@@ -391,7 +391,7 @@ internal class YoutubeAPIs
         SetForegroundWindow(GetConsoleWindow());
     }
 #endif
-
+#endif
 
 
 
@@ -413,12 +413,13 @@ internal class YoutubeAPIs
             $"https://music.youtube.com/playlist?list={id}";
     }
 
+
     //https://developers.google.com/youtube/v3/code_samples/dotnet
 	public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
 		string playlistDescription = "", bool makeNewPlaylistOnError = true, bool checkForDupes = false)
 	{
 		if (!initialized)
-			await this.InitializeAutomatic().ConfigureAwait(false);
+			await InitializeAutomatic().ConfigureAwait(false);
 
 		YouTubeService youTubeService = new(new BaseClientService.Initializer()
 		{
@@ -463,7 +464,7 @@ internal class YoutubeAPIs
 		{
 			videoToAdd = await youTubeService.PlaylistItems.Insert(videoToAdd, "snippet").ExecuteAsync().ConfigureAwait(false);
 		}
-		catch (Google.GoogleApiException e)
+		catch (GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[playlistNotFound]"))
 			{
@@ -479,7 +480,7 @@ internal class YoutubeAPIs
      private async IAsyncEnumerable<PlaylistItem> GetPlaylistItemsInPlaylist(string playlistId)
      {
 	     if (!initialized)
-             await this.InitializeAutomatic().ConfigureAwait(false);
+             await InitializeAutomatic().ConfigureAwait(false);
 	     YouTubeService youTubeService = new(new BaseClientService.Initializer()
 	     {
 		     HttpClientInitializer = credential,
@@ -505,7 +506,7 @@ internal class YoutubeAPIs
     public async IAsyncEnumerable<Playlist> GetMyPlaylists()
     {
         if (!initialized)
-            await this.InitializeAutomatic().ConfigureAwait(false);
+            await InitializeAutomatic().ConfigureAwait(false);
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
@@ -537,6 +538,25 @@ internal class YoutubeAPIs
 		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //Upper Limit is exclusive
 	}
 
+
+    internal async Task<string> MakeWeeklyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Weekly - {playlistTitle}",
+		    $"Weekly {playlistDescription}").ConfigureAwait(false);
+    }
+
+    internal async Task<string> MakeMonthlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Monthly - {playlistTitle}",
+		    $"Monthly {playlistDescription}").ConfigureAwait(false);
+    }
+
+    internal async Task<string> MakeYearlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Yearly - {playlistTitle}",
+		    $"Yearly {playlistDescription}").ConfigureAwait(false);
+    }
+
     public const string defaultPlaylistName = "Recommendation Playlist";
     public const string defaultPlaylistDescription = "Auto-Generated Discord Recommendation Playlist";
     public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
@@ -563,7 +583,7 @@ internal class YoutubeAPIs
             recommendationPlaylist =
 				await youTubeService.Playlists.Insert(recommendationPlaylist, "snippet,status").ExecuteAsync().ConfigureAwait(false);
         }
-		catch (Google.GoogleApiException e)
+		catch (GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[youtubeSignupRequired]"))
 			{

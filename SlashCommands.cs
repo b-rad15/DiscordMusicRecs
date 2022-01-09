@@ -267,7 +267,8 @@ public class SlashCommands : ApplicationCommandModule
 
     [SlashCommand("recsplaylist", "List the playlist that is bound to the given channel")]
     public static async Task GetRecsPlaylist(InteractionContext ctx,
-        [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
+        [Option("PlaylistChannel", "Channel that the playlist is bound to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel,
+	    [Option("ShowTimeBased", "Whether to also show the weekly/monthly/yearly playlist")]bool showTimeBased = false)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
         DiscordWebhookBuilder msg = new();
@@ -292,8 +293,15 @@ public class SlashCommands : ApplicationCommandModule
                 return;
             }
 
+            string responseText = $"{playlistChannel.Mention}'s playlist is {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}";
+            if (showTimeBased)
+            {
+	            responseText += $"\nWeekly Playlist: {YoutubeAPIs.IdToPlaylist(rowData.WeeklyPlaylistID)}";
+	            responseText += $"\nMonthly Playlist: {YoutubeAPIs.IdToPlaylist(rowData.MonthlyPlaylistID)}";
+	            responseText += $"\nYearly Playlist: {YoutubeAPIs.IdToPlaylist(rowData.YearlyPlaylistID)}";
+            }
             msg.WithContent(
-                $"{playlistChannel.Mention}'s playlist is {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}");
+                responseText);
             await ctx.EditResponseAsync(msg).ConfigureAwait(false) ;
         }
         catch (Exception exception)
@@ -430,12 +438,15 @@ public class SlashCommands : ApplicationCommandModule
 
             try
             {
-	            weeklyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Weekly - {playlistTitle}",
-		            $"Weekly {playlistDescription}").ConfigureAwait(false);
+	            weeklyPlaylistId = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
+	            monthlyPlaylistId = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
+	            yearlyPlaylistId = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
+                /*
 	            monthlyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Monthly - {playlistTitle}",
 		            $"Monthly {playlistDescription}").ConfigureAwait(false);
 	            yearlyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Yearly - {playlistTitle}",
 		            $"Yearly {playlistDescription}").ConfigureAwait(false);
+                */
             }
             catch (Exception e)
             {
@@ -465,6 +476,7 @@ public class SlashCommands : ApplicationCommandModule
                 await ctx.EditResponseAsync(msg).ConfigureAwait(false);
             }
         }
+
 
         [SlashCommand("moveplaylist", "Moves existing watch from one channel to another")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
@@ -654,15 +666,23 @@ public class SlashCommands : ApplicationCommandModule
 			        string removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
 			        await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
 
-			        Database.VideoData? vidToDelete = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, videoId: id).ConfigureAwait(false);
+			        Database.VideoData? vidToDelete = await Database.Instance
+					        .GetPlaylistItem(rowData.PlaylistId, videoId: id).ConfigureAwait(false);
+
 			        if (vidToDelete is null)
 			        {
+				        if (await YoutubeAPIs.Instance.RemoveFromPlaylist(rowData.PlaylistId, id).ConfigureAwait(false) > 0)
+				        {
+					        removeString += $"Removed {YoutubeAPIs.IdToVideo(id)}\n";
+					        goto successfulRemoval;
+                        }
 				        msg.WithContent(removeString + "No Videos Found");
 				        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
 				        return;
 			        }
 
 			        removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!).ConfigureAwait(false);
+                    successfulRemoval:
 			        await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
 		        }
 		        catch (Exception e)
@@ -760,7 +780,7 @@ public class SlashCommands : ApplicationCommandModule
 
 		    }
 
-		    Task<int> rowsDeleted = Database.Instance.DeletePlaylistItem(playlistId, messageId:entry.MessageId);
+		    Task<int> rowsDeleted = Database.Instance.DeleteVideoSubmitted(playlistId, messageId:entry.MessageId);
 		    if (removeMessage)
 		    {
 			    try

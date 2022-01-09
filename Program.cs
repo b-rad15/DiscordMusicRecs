@@ -12,6 +12,7 @@ using Google;
 using Google.Apis.YouTube.v3.Data;
 using Npgsql;
 using Serilog;
+using Serilog.Events;
 using Timer = System.Timers.Timer;
 
 [assembly: InternalsVisibleTo("DiscordMusicRecsTest")]
@@ -34,12 +35,12 @@ internal class Program
 
     // private static Regex youtubeShortRegex = new(@"(http(s?)://(www)\.)?(youtu\.be)(/[a-zA-Z0-9_-]+)&?", RegexOptions.Compiled);
     // modified from https://stackoverflow.com/questions/3717115/regular-expression-for-youtube-links
-    public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|[\w-=&]*?&v=)|embed\/|v\/))(?<id>[\w\-]+)(&\S+)*|youtu\.be\/(?<id>\S+)))", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
-    // public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com(\/(?:[\w\-]+\?(v=|list=.*?&v=)|embed\/|v\/))([\w\-]+)|youtu\.be\/(\S+)))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+    public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|[\w-=&]*?&v=)|embed\/|v\/))(?<id>[\w\-]+)(&\S+)*|youtu\.be\/(?<id>\S+?)((\/|\?).*)?))$", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+    // public static readonly Regex MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex = new(@"^((?<protocol>https?:)?\/\/)?((?<prefix>www|m|music)\.)?((?<importantPart>youtube\.com(\/(?:[\w\-]+\?(v=|[\w-=&]*?&v=)|embed\/|v\/))(?<id>[\w\-]+)(&\S+)*|youtu\.be\/(?<id>\S+)))", RegexOptions.Compiled | RegexOptions.ExplicitCapture);
     // public static readonly Regex IShouldJustCopyStackOverflowYoutubeRegex = new(
     //     @"^((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$", RegexOptions.Compiled);
-    public static readonly Regex IShouldJustCopyStackOverflowYoutubeMatchAnywhereInStringRegex = new(
-        @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
+    // public static readonly Regex IShouldJustCopyStackOverflowYoutubeMatchAnywhereInStringRegex = new(
+    //     @"((?:https?:)?\/\/)?((?:www|m|music)\.)?((?:youtube\.com|youtu\.be))(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?", RegexOptions.Compiled);
 
     private static bool removeNonUrls = false;
     public static DiscordUser? BotOwnerDiscordUser;
@@ -177,7 +178,7 @@ internal class Program
     private static async Task UpdateVotes(DiscordMessage message, string playlistId)
     {
 		    (short upvotes, short downvotes) = await CountVotes(message).ConfigureAwait(false);
-		    await Database.Instance.UpdateVotes(messageId: message.Id, playlistId:playlistId, upvotes: upvotes, downvotes: downvotes as short?).ConfigureAwait(false);
+		    await Database.Instance.UpdateVotes(messageId: message.Id, playlistId:playlistId, upvotes: upvotes, downvotes: downvotes).ConfigureAwait(false);
     }
 
     private static Task OnDiscordOnMessageCreated(DiscordClient sender, MessageCreateEventArgs e)
@@ -206,8 +207,7 @@ internal class Program
                     if ((match = MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(e.Message.Content)).Success &&
                         match.Groups["id"].Value is not "playlist" or "watch" or "channel")
                     {
-                        bool success = false;
-                        string id = match.Groups["id"].Value;
+	                    string id = match.Groups["id"].Value;
                         if (string.IsNullOrEmpty(id))
                         {
                             DiscordMessage? badMessage = await Discord.SendMessageAsync(e.Channel,
@@ -219,32 +219,36 @@ internal class Program
                         }
 
                         string playlistId = rowData?.PlaylistId!;
-                        success = !string.IsNullOrWhiteSpace(rowData?.PlaylistId);
-
-
+                        bool dbSuccess = false;
+                        List<string> playlistItemsAdded = new();
                         try
                         {
 	                        PlaylistItem usedPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, playlistId,
 		                        $"{e.Guild.Name} Music Recommendation Playlist", checkForDupes:true).ConfigureAwait(false);
+                            playlistItemsAdded.Add(usedPlaylistItem.Id);
 	                        PlaylistItem weeklyPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, rowData.WeeklyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
-	                        PlaylistItem monthlyPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, rowData.MonthlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
-	                        PlaylistItem yearlyPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, rowData.YearlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
-	                        await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation")
-		                        .ConfigureAwait(false);
-	                        await e.Message.CreateReactionAsync(UpvoteEmoji).ConfigureAwait(false); 
-//TODO: Make downvotes runtime, per channel configurable
-#if EnableDownvote
-                            await e.Message.CreateReactionAsync(DownvoteEmoji).ConfigureAwait(false);
-#endif
+	                        playlistItemsAdded.Add(weeklyPlaylistItem.Id);
+                            PlaylistItem monthlyPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, rowData.MonthlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
+                            playlistItemsAdded.Add(monthlyPlaylistItem.Id);
+                            PlaylistItem yearlyPlaylistItem = await YoutubeAPIs.Instance.AddToPlaylist(id, rowData.YearlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
+                            playlistItemsAdded.Add(yearlyPlaylistItem.Id);
                             if (usedPlaylistItem.Snippet.PlaylistId != playlistId)
 	                        {
 		                        await Database.Instance.ChangePlaylistId(e.Guild.Id, e.Channel.Id, usedPlaylistItem.Snippet.PlaylistId, playlistId).ConfigureAwait(false);
 		                        // await Database.Instance.MakePlaylistTable(usedPlaylistItem.Snippet.PlaylistId).ConfigureAwait(false);
 	                        }
 
-	                        await Database.Instance.AddVideoToPlaylistTable(usedPlaylistItem.Snippet.PlaylistId, id,
+	                        dbSuccess = 0 < await Database.Instance.AddVideoToPlaylistTable(usedPlaylistItem.Snippet.PlaylistId, id,
 		                        usedPlaylistItem.Id, weeklyPlaylistItem.Id, monthlyPlaylistItem.Id, yearlyPlaylistItem.Id, e.Channel.Id, e.Author.Id,
 		                        e.Message.Timestamp, e.Message.Id).ConfigureAwait(false);
+
+	                        await Discord.SendMessageAsync(e.Channel, "Thanks for the Recommendation")
+		                        .ConfigureAwait(false);
+	                        await e.Message.CreateReactionAsync(UpvoteEmoji).ConfigureAwait(false);
+	                        //TODO: Make downvotes runtime, per channel configurable
+#if EnableDownvote
+                            await e.Message.CreateReactionAsync(DownvoteEmoji).ConfigureAwait(false);
+#endif
                         }
                         catch (GoogleApiException exception)
                         {
@@ -256,12 +260,27 @@ internal class Program
                                 await Task.Delay(5000).ConfigureAwait(false);
                                 await badMessage.DeleteAsync().ConfigureAwait(false);
                                 await e.Message.DeleteAsync().ConfigureAwait(false);
-                                await Program.Discord.DisconnectAsync().ConfigureAwait(false);
+                                await Discord.DisconnectAsync().ConfigureAwait(false);
                                 return;
+	                        }
+                            //Remove any that did work
+	                        foreach (string playlistItemId in playlistItemsAdded)
+	                        {
+		                        await YoutubeAPIs.Instance.RemovePlaylistItem(playlistItemId).ConfigureAwait(false);
 	                        }
                         }
                         catch (Exception exception)
                         {
+                            //Remove from Playlists
+	                        foreach (string playlistItemId in playlistItemsAdded)
+	                        {
+		                        await YoutubeAPIs.Instance.RemovePlaylistItem(playlistItemId).ConfigureAwait(false);
+	                        }
+                            //Remove From Database
+                            if (dbSuccess)
+                            {
+	                            await Database.Instance.DeleteVideoSubmitted(playlistId, messageId: e.Message.Id).ConfigureAwait(false);
+                            }
                             if (exception.Message == "Video already exists in playlist")
                             {
                                 DiscordMessage? badMessage =
@@ -284,7 +303,7 @@ internal class Program
                     }
                     else
                     {
-	                    Log.Debug($"Message \"{e.Message.Content}\" does not match");
+	                    Log.Debug($"Message \"{e.Message.Content}\" does not match {MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}");
                         if (removeNonUrls)
                         {
                             await e.Message.DeleteAsync().ConfigureAwait(false);
@@ -309,12 +328,12 @@ internal class Program
 	    if (!Directory.Exists(logPath))
 		    Directory.CreateDirectory(logPath);
 	    Log.Logger = new LoggerConfiguration()
+		    .MinimumLevel.Verbose()
 		    .WriteTo.Console()
 		    .WriteTo.Async(a=> a.File(Path.Combine(logPath, ".log"), rollingInterval: RollingInterval.Day))
 		    .CreateLogger();
 	    Log.Information("Starting");
-	    // await Database.Instance.MakeServerTables().ConfigureAwait(false);
-        await Database.Instance.MakeServerTables().ConfigureAwait(false);
+        // await Database.Instance.MakeServerTables().ConfigureAwait(false);
         // await Task.Delay(20_000);
         // var allPlaylistIds = await Database.Instance.GetAllPlaylistIds().ToListAsync(); 
         // foreach (var playlistId in allPlaylistIds)
@@ -322,8 +341,11 @@ internal class Program
         //     await Database.Instance.MakePlaylistTable(playlistId);
         // }
         await YoutubeAPIs.Instance.InitializeAutomatic().ConfigureAwait(false);
+        Log.Information("Initialized Youtube Credentials");
         await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
-        await HelperFunctions.PopulateTimeBasedPlaylists().ConfigureAwait(false);
+        Log.Information("Removed old time based entries");
+        await Database.PopulateTimeBasedPlaylists().ConfigureAwait(false);
+        Log.Information("Populated new time based playlist entries");
         Timer dailyTimer = new()
         {
 	        AutoReset = true,
