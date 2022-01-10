@@ -730,13 +730,13 @@ internal class Database
     {
         int count = 0;
         DateTime runTime = DateTime.Now;
-        count += await PopulateWeeklyPlaylist(runTime, true).ConfigureAwait(false);
-        count += await PopulateMonthlyPlaylist(runTime, true).ConfigureAwait(false);
-        count += await PopulateYearlyPlaylist(runTime, true).ConfigureAwait(false);
+        count += await PopulateWeeklyPlaylist(runTime).ConfigureAwait(false);
+        count += await PopulateMonthlyPlaylist(runTime).ConfigureAwait(false);
+        count += await PopulateYearlyPlaylist(runTime).ConfigureAwait(false);
         return count;
     }
 
-    public static async Task<int> PopulateWeeklyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true, bool exactlyOneWeek = false)
+    public static async Task<int> PopulateWeeklyPlaylist(DateTime? passedDateTime = null, bool exactlyOneWeek = true)
     {
         DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         await using DiscordDatabaseContext database = new();
@@ -782,7 +782,7 @@ internal class Database
         return count;
     }
 
-    public static async Task<int> PopulateMonthlyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true)
+    public static async Task<int> PopulateMonthlyPlaylist(DateTime? passedDateTime = null)
     {
         DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         await using DiscordDatabaseContext database = new();
@@ -828,7 +828,7 @@ internal class Database
         return count;
     }
 
-    public static async Task<int> PopulateYearlyPlaylist(DateTime? passedDateTime = null, bool saveDatabase = true)
+    public static async Task<int> PopulateYearlyPlaylist(DateTime? passedDateTime = null)
     {
         DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         await using DiscordDatabaseContext database = new();
@@ -877,7 +877,7 @@ internal class Database
     #endregion
     #region TimeBasedFuncs
     //Weekly Add
-    private static Func<VideoData, bool> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = false)
+    private static Func<VideoData, bool> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
         DateTime dt = passedDateTime ?? DateTime.Now;
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
@@ -905,7 +905,7 @@ internal class Database
     }
 
     //Weekly Remove
-    private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
+    private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
@@ -915,7 +915,7 @@ internal class Database
     internal async Task<List<string?>> GetPlaylistItemsToRemoveWeekly(DateTime? passedDateTime = null)
     {
         await using DiscordDatabaseContext database = new();
-        return await database.VideosSubmitted.Where(WeeklySubmissionsToRemoveFunc(passedDateTime,false)).Select(video => video.WeeklyPlaylistItemId).ToListAsync().ConfigureAwait(false);
+        return await database.VideosSubmitted.Where(WeeklySubmissionsToRemoveFunc(passedDateTime)).Select(video => video.WeeklyPlaylistItemId).ToListAsync().ConfigureAwait(false);
     }
     internal async Task<int> NullOneWeeklyPlaylistItem(string playlistItemId)
     {
