@@ -34,8 +34,8 @@ namespace DiscordMusicRecs;
 // ReSharper disable once InconsistentNaming
 internal class YoutubeAPIs
 {
-	[SuppressMessage("ReSharper", "InconsistentNaming")]
-	[SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Must Match Json")]
+    [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Must Match Json"),
+     SuppressMessage("ReSharper", "InconsistentNaming", Justification = "Must Match Json")]
     internal class YouTubeClientSecret
 	{
 		public string client_id { get; set; } = null!;
@@ -74,8 +74,9 @@ internal class YoutubeAPIs
 		}
 	}
 
-    private YoutubeAPIs() 
+    private YoutubeAPIs()
     {
+        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}";
     }
 
     public static YoutubeAPIs Instance { get; } = new();
@@ -83,6 +84,7 @@ internal class YoutubeAPIs
 	private YouTubeService? youTubeService;
 	private bool initialized = false;
 	private UserCredential credential = null!;
+    private string ApplicationName;
 	public async Task InitializeAutomatic()
 	{
 		FileStream stream = new("client_secret_youtube.json", FileMode.Open, FileAccess.Read);
@@ -94,7 +96,7 @@ internal class YoutubeAPIs
 				new[] { YouTubeService.Scope.Youtube },
 				"user",
 				CancellationToken.None,
-				new FileDataStore($"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}")
+				new FileDataStore(ApplicationName)
 			).ConfigureAwait(false);
 		}
 		initialized = true;
@@ -127,7 +129,7 @@ internal class YoutubeAPIs
 		UserAndAccessToken creds = await DoOAuthAsync(secretsData.client_id, secretsData.client_secret).ConfigureAwait(false);
 		youTubeService = new YouTubeService(new BaseClientService.Initializer()
 		{
-			ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}",
+			ApplicationName = ApplicationName,
             DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.UnsuccessfulResponse503 | ExponentialBackOffPolicy.Exception,
             // HttpClientInitializer = new UserCredential(new GoogleAuthorizationCodeFlow(), creds.User, new TokenResponse())
 		});
@@ -184,7 +186,7 @@ internal class YoutubeAPIs
 #if false
         // Brings the Console to Focus.
         BringConsoleToFront();
-#endif 
+#endif
 
         // Sends an HTTP response to the browser.
         HttpListenerResponse response = context.Response;
@@ -365,6 +367,7 @@ internal class YoutubeAPIs
         byte[] bytes = Encoding.ASCII.GetBytes(text);
         return SHA256.HashData(bytes);
     }
+#endif
     /// <summary>
     /// Base64url no-padding encodes the given input buffer.
     /// </summary>
@@ -374,6 +377,7 @@ internal class YoutubeAPIs
     {
 	    return Base64UrlEncoder.Encode(buffer).Replace("=","");
     }
+#if manualYoutubeAPIAuth
 
 #if false
     // Hack to bring the Console window to front.
@@ -399,7 +403,7 @@ internal class YoutubeAPIs
 
 
 
-	public static string IdToVideo(string id, bool useYoutubeMusic = false)
+    public static string IdToVideo(string id, bool useYoutubeMusic = false)
     {
         return !useYoutubeMusic ? 
             $"https://youtu.be/{id}" :
@@ -424,7 +428,7 @@ internal class YoutubeAPIs
 		YouTubeService youTubeService = new(new BaseClientService.Initializer()
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+			ApplicationName = ApplicationName
 		});
     MakeNewPlaylist:
         if (string.IsNullOrWhiteSpace(playlistId))
@@ -484,7 +488,7 @@ internal class YoutubeAPIs
 	     YouTubeService youTubeService = new(new BaseClientService.Initializer()
 	     {
 		     HttpClientInitializer = credential,
-		     ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+		     ApplicationName = ApplicationName
 	     });
 	     string? pagingToken = "";
          while (pagingToken is not null)
@@ -510,7 +514,7 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+	        ApplicationName = ApplicationName
         });
         string? pagingToken = "";
         while (pagingToken is not null)
@@ -541,20 +545,20 @@ internal class YoutubeAPIs
 
     internal async Task<string> MakeWeeklyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Weekly - {playlistTitle}",
+	    return await NewPlaylist($"Weekly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
 		    $"Weekly {playlistDescription}").ConfigureAwait(false);
     }
 
     internal async Task<string> MakeMonthlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Monthly - {playlistTitle}",
-		    $"Monthly {playlistDescription}").ConfigureAwait(false);
+	    return await NewPlaylist($"Monthly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+		    $"Monthly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
     }
 
     internal async Task<string> MakeYearlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Yearly - {playlistTitle}",
-		    $"Yearly {playlistDescription}").ConfigureAwait(false);
+	    return await NewPlaylist($"Yearly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+		    $"Yearly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
     }
 
     public const string defaultPlaylistName = "Recommendation Playlist";
@@ -564,7 +568,7 @@ internal class YoutubeAPIs
 		YouTubeService? youTubeService = new(new BaseClientService.Initializer
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+			ApplicationName = ApplicationName
 		});
         recommendationPlaylist = new Playlist
 		{
@@ -605,7 +609,7 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+	        ApplicationName = ApplicationName
         });
         string? deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
@@ -625,7 +629,7 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+	        ApplicationName = ApplicationName
         });
         string? deleteResponse = await youTubeService.PlaylistItems.Delete(playlistItemId).ExecuteAsync().ConfigureAwait(false);
 	    if (!string.IsNullOrWhiteSpace(deleteResponse))
@@ -647,7 +651,7 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}"
+	        ApplicationName = ApplicationName
         });
         int vidsRemoved = 0;
         await foreach (Playlist playlist in GetMyPlaylists().ConfigureAwait(false))

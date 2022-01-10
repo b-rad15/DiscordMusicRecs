@@ -16,22 +16,25 @@ namespace DiscordMusicRecs
 			DateTime runTime = DateTime.Now;
 			int count = 0;
 			List<string?> videosToRemoveWeekly = await Database.Instance.GetPlaylistItemsToRemoveWeekly(runTime).ConfigureAwait(false);
-			foreach (string video in videosToRemoveWeekly)
-			{
-				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
-				++count;
-			}
+			foreach (string? video in videosToRemoveWeekly)
+            {
+				if(string.IsNullOrWhiteSpace(video)) continue;
+                await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
+                ++count;
+            }
 			await Database.Instance.NullAllWeeklyPlaylistItem(runTime).ConfigureAwait(false);
 			List<string?> videosToRemoveMonthly = await Database.Instance.GetPlaylistItemsToRemoveMonthly(runTime).ConfigureAwait(false);
-			foreach (string video in videosToRemoveMonthly)
+			foreach (string? video in videosToRemoveMonthly.Where(video => !string.IsNullOrWhiteSpace(video)))
 			{
+                if (string.IsNullOrWhiteSpace(video)) continue;
 				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
 				++count;
 			}
 			await Database.Instance.NullAllMonthlyPlaylistItem(runTime).ConfigureAwait(false);
 			List<string?> videosToRemoveYearly = await Database.Instance.GetPlaylistItemsToRemoveYearly(runTime).ConfigureAwait(false);
-			foreach (string video in videosToRemoveYearly)
+			foreach (string? video in videosToRemoveYearly.Where(video => !string.IsNullOrWhiteSpace(video)))
 			{
+                if (string.IsNullOrWhiteSpace(video)) continue;
 				await YoutubeAPIs.Instance.RemovePlaylistItem(video).ConfigureAwait(false);
 				++count;
 			}

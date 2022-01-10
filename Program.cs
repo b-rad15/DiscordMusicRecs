@@ -89,7 +89,7 @@ internal class Program
 
     public static async Task HandleDeletedChannel(ulong channelId, bool shouldDeletePlaylist = true, Database.PlaylistData? rowData = null)
     {
-	    rowData ??= await Database.Instance.GetPlaylistsRowData(channelId: channelId).ConfigureAwait(false);
+	    rowData ??= await Database.Instance.GetPlaylistRowData(channelId: channelId).ConfigureAwait(false);
 	    if (rowData is null)
 	    {
             //No Row Exists for given channel, no playlist to delete
@@ -160,7 +160,7 @@ internal class Program
                 Log.Error("Ok which one of you added this method to another event?");
                 return;
         }
-	    Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(channelId: message.ChannelId).ConfigureAwait(false);
+	    Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(channelId: message.ChannelId).ConfigureAwait(false);
 	    if (rowData?.PlaylistId is null)
 	    {
 		    return;
@@ -191,7 +191,7 @@ internal class Program
                 Database.PlaylistData? rowData = null;
                 try
                 {
-                    rowData = await Database.Instance.GetPlaylistsRowData(channelId: e.Channel.Id).ConfigureAwait(false);
+                    rowData = await Database.Instance.GetPlaylistRowData(channelId: e.Channel.Id).ConfigureAwait(false);
                     recsChannelId = rowData?.ChannelId; //null if rowData is null otherwise channelId
                 }
                 catch (Exception exception)
@@ -216,6 +216,30 @@ internal class Program
                             await badMessage.DeleteAsync().ConfigureAwait(false);
                             shouldDeleteMessage = true;
                             goto deleteMessage;
+                        }
+
+                        //Handle banned things
+                        await using (Database.DiscordDatabaseContext database = new())
+                        {
+                            if (!await Database.IsVideoAllowed(e.Guild.Id, rowData.PlaylistId, e.Author.Id, database)
+                                    .ConfigureAwait(false))
+                            {
+                                DiscordMessage? badMessage = await Discord.SendMessageAsync(e.Channel,
+                                    "This video is banned from being posted. If you think this is a mistake, ask the mods").ConfigureAwait(false);
+                                await Task.Delay(5000).ConfigureAwait(false);
+                                await badMessage.DeleteAsync().ConfigureAwait(false);
+                                shouldDeleteMessage = true;
+                                goto deleteMessage;
+                            } else if (!await Database.IsUserAllowed(e.Guild.Id, rowData.PlaylistId, e.Author.Id, database)
+                                           .ConfigureAwait(false))
+                            {
+                                DiscordMessage? badMessage = await Discord.SendMessageAsync(e.Channel,
+                                    "You are banned from posting. If you think this is a mistake, ask the mods").ConfigureAwait(false);
+                                await Task.Delay(5000).ConfigureAwait(false);
+                                await badMessage.DeleteAsync().ConfigureAwait(false);
+                                shouldDeleteMessage = true;
+                                goto deleteMessage;
+                            }
                         }
 
                         string playlistId = rowData?.PlaylistId!;

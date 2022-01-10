@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -16,9 +17,12 @@ using DSharpPlus.Net;
 using DSharpPlus.SlashCommands;
 using Google;
 using Google.Apis.YouTube.v3.Data;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using Npgsql;
 using Serilog;
+using Z.EntityFramework.Plus;
+
 // ReSharper disable UnusedMember.Global
 
 namespace DiscordMusicRecs;
@@ -57,6 +61,23 @@ public class RequireBotAdminPrivilegeAttribute : SlashCheckBaseAttribute
         return false;
     }
 }
+
+#if UseChoiceProvider
+public class IsConfiguredChannel : IChoiceProvider
+{
+    public async Task<IEnumerable<DiscordApplicationCommandOptionChoice>> Provider(InteractionContext ctx)
+    {
+        List<ulong?> channelIds = await Database.Instance.GetChannelsConnectedForServer(ctx.Guild.Id).ConfigureAwait(false);
+        List<Task<DiscordApplicationCommandOptionChoice>> channelTask = channelIds.Where(channelId => channelId is not null).Select(async channelId =>
+        {
+            DiscordChannel channel = await Program.Discord.GetChannelAsync(channelId.Value);
+            return new DiscordApplicationCommandOptionChoice(channel.Name, channel);
+        }).ToList();
+        DiscordApplicationCommandOptionChoice[] options = await Task.WhenAll(channelTask).ConfigureAwait(false);
+        return options;
+    }
+}
+#endif
 
 public class SlashCommands : ApplicationCommandModule
 {
@@ -190,7 +211,7 @@ public class SlashCommands : ApplicationCommandModule
         [Option("PlaylistChannel", "Channel to rank results from")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel playlistChannel)
     {
         await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-        Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(channelId: playlistChannel.Id).ConfigureAwait(false);
+        Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(channelId: playlistChannel.Id).ConfigureAwait(false);
         DiscordWebhookBuilder msg = new();
         if (rowData?.PlaylistId is null)
         {
@@ -231,7 +252,7 @@ public class SlashCommands : ApplicationCommandModule
         DiscordWebhookBuilder msg = new();
         try
         {
-            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
+            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
 	            channelId: playlistChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
@@ -274,7 +295,7 @@ public class SlashCommands : ApplicationCommandModule
         DiscordWebhookBuilder msg = new();
         try
         {
-            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
+            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
 	            channelId: playlistChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
@@ -320,58 +341,70 @@ public class SlashCommands : ApplicationCommandModule
     public class AdminSlashCommands : ApplicationCommandModule
     {
 
-        [SlashCommand("addplaylist", "Adds channel to watch with a new playlist. Move existing with `/admin moveplaylist`")]
+        [SlashCommand("addplaylist",
+            "Adds channel to watch with a new playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public static async Task AddPlaylist(InteractionContext ctx,
-            [Option("BindChannel", "Channel to bind to")][ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel,
-            [Option("PlaylistTitle", "The title of the playlist")] string? playlistTitle = null,
-            [Option("PlaylistDescription", "The description of the playlist")] string? playlistDescription = null,
-            [Option("PlaylistBase", "The id of the playlist to add songs too, this MUST be a playlist created by the bot")] string? playlistId = null)
+            [Option("BindChannel", "Channel to bind to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel bindChannel,
+            [Option("PlaylistTitle", "The title of the playlist")]
+            string? playlistTitle = null,
+            [Option("PlaylistDescription", "The description of the playlist")]
+            string? playlistDescription = null,
+            [Option("PlaylistBase",
+                "The id of the playlist to add songs too, this MUST be a playlist created by the bot")]
+            string? playlistId = null)
         {
-            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
             //Check if Valid
-            if (await Database.Instance.CheckPlaylistChannelExists(Database.MainTableName, channelId: bindChannel.Id).ConfigureAwait(false))
+            if (await Database.Instance.CheckPlaylistChannelExists(Database.MainTableName, channelId: bindChannel.Id)
+                    .ConfigureAwait(false))
             {
-	            msg.WithContent("There is already a playlist bound to this channel, it must be deleted or moved before adding a new one");
-	            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                msg.WithContent(
+                    "There is already a playlist bound to this channel, it must be deleted or moved before adding a new one");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
                 return;
             }
+
             //Make sure Bot is in channel/thread
             if (bindChannel.IsThread)
             {
-                DiscordThreadChannel bindThread = (DiscordThreadChannel) await Program.Discord.GetChannelAsync(bindChannel.Id).ConfigureAwait(false);
-	            if (bindThread is not null)
-	            {
-		            await bindThread.JoinThreadAsync().ConfigureAwait(false);
+                DiscordThreadChannel bindThread =
+                    (DiscordThreadChannel)await Program.Discord.GetChannelAsync(bindChannel.Id).ConfigureAwait(false);
+                if (bindThread is not null)
+                {
+                    await bindThread.JoinThreadAsync().ConfigureAwait(false);
                     //Check right permissions for thread
-		            if (bindChannel
-		                .PermissionsFor(await ctx.Guild.GetMemberAsync(Program.Discord.CurrentUser.Id)
-			                .ConfigureAwait(false)).HasFlag(Permissions.SendMessagesInThreads & Permissions.ReadMessageHistory))
-		            {
-			            msg.WithContent("Either cannot read or cannot send messages in this thread");
-			            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-			            return;
+                    if (bindChannel
+                        .PermissionsFor(await ctx.Guild.GetMemberAsync(Program.Discord.CurrentUser.Id)
+                            .ConfigureAwait(false))
+                        .HasFlag(Permissions.SendMessagesInThreads & Permissions.ReadMessageHistory))
+                    {
+                        msg.WithContent("Either cannot read or cannot send messages in this thread");
+                        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                        return;
                     }
-	            }
-	            else
-	            {
-		            msg.WithContent("Cannot join specified thread");
-		            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                }
+                else
+                {
+                    msg.WithContent("Cannot join specified thread");
+                    await ctx.EditResponseAsync(msg).ConfigureAwait(false);
                     return;
-	            }
+                }
             }
             else
             {
-	            //check right permissions for channel
-	            if (!bindChannel
-		                .PermissionsFor(await ctx.Guild.GetMemberAsync(Program.Discord.CurrentUser.Id)
-			                .ConfigureAwait(false)).HasFlag(Permissions.SendMessages & Permissions.ReadMessageHistory))
-	            {
-		            msg.WithContent("Either cannot read or cannot send messages in this channel");
-		            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-		            return;
-	            }
+                //check right permissions for channel
+                if (!bindChannel
+                        .PermissionsFor(await ctx.Guild.GetMemberAsync(Program.Discord.CurrentUser.Id)
+                            .ConfigureAwait(false)).HasFlag(Permissions.SendMessages & Permissions.ReadMessageHistory))
+                {
+                    msg.WithContent("Either cannot read or cannot send messages in this channel");
+                    await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                    return;
+                }
             }
 
             string weeklyPlaylistId;
@@ -384,13 +417,15 @@ public class SlashCommands : ApplicationCommandModule
                 if ((playlistMatch = IReallyHopeThisPullsPlaylistIdsRegex.Match(playlistId)).Success)
                     playlistId = playlistMatch.Groups["id"].Value;
 
-                if(string.IsNullOrWhiteSpace(playlistId))
+                if (string.IsNullOrWhiteSpace(playlistId))
                 {
-	                if (await YoutubeAPIs.Instance.GetMyPlaylistIds().AnyAsync(channelPlaylistId => channelPlaylistId == playlistId).ConfigureAwait(false))
-	                {
-		                validPlaylist = true;
-	                }
+                    if (await YoutubeAPIs.Instance.GetMyPlaylistIds()
+                            .AnyAsync(channelPlaylistId => channelPlaylistId == playlistId).ConfigureAwait(false))
+                    {
+                        validPlaylist = true;
+                    }
                 }
+
                 if (!validPlaylist)
                 {
                     msg.WithContent("Invalid Playlist Given. Make sure the bot created it");
@@ -400,29 +435,29 @@ public class SlashCommands : ApplicationCommandModule
             }
             else
             {
-	            try
-	            {
-		            playlistTitle ??= $"{ctx.Guild.Name}'s {YoutubeAPIs.defaultPlaylistName}";
-		            playlistDescription ??= $"{YoutubeAPIs.defaultPlaylistDescription} for {ctx.Guild.Name} server";
-		            playlistId = await YoutubeAPIs.Instance.NewPlaylist(
-			            playlistTitle, playlistDescription )
-			            .ConfigureAwait(false);
+                try
+                {
+                    playlistTitle ??= $"{ctx.Guild.Name}'s {YoutubeAPIs.defaultPlaylistName}";
+                    playlistDescription ??= $"{YoutubeAPIs.defaultPlaylistDescription} for {ctx.Guild.Name} server";
+                    playlistId = await YoutubeAPIs.Instance.NewPlaylist(
+                            playlistTitle, playlistDescription)
+                        .ConfigureAwait(false);
                     // await Database.Instance.MakePlaylistTable(playlistId); Videos Submitted now stored in same table TODO: Learn to make tables of identical schema at runtime 
                 }
-	            catch (GoogleApiException e)
-	            {
-		            if (e.Message.Contains("Reason[youtubeSignupRequired]"))
-		            {
-			            Log.Fatal("Must Sign up used google account for youtube channel");
-			            msg.WithContent(
-				            $"Google Account associated with bot does not have a youtube channel created, have {Program.BotOwnerDiscordUser?.Mention} create one on youtube's website");
-			            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-			            return;
+                catch (GoogleApiException e)
+                {
+                    if (e.Message.Contains("Reason[youtubeSignupRequired]"))
+                    {
+                        Log.Fatal("Must Sign up used google account for youtube channel");
+                        msg.WithContent(
+                            $"Google Account associated with bot does not have a youtube channel created, have {Program.BotOwnerDiscordUser?.Mention} create one on youtube's website");
+                        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                        return;
                     }
-		            else
-		            {
-			            throw;
-		            }
+                    else
+                    {
+                        throw;
+                    }
                 }
                 catch (Exception e)
                 {
@@ -438,9 +473,12 @@ public class SlashCommands : ApplicationCommandModule
 
             try
             {
-	            weeklyPlaylistId = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-	            monthlyPlaylistId = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-	            yearlyPlaylistId = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
+                weeklyPlaylistId = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription)
+                    .ConfigureAwait(false);
+                monthlyPlaylistId = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription)
+                    .ConfigureAwait(false);
+                yearlyPlaylistId = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription)
+                    .ConfigureAwait(false);
                 /*
 	            monthlyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Monthly - {playlistTitle}",
 		            $"Monthly {playlistDescription}").ConfigureAwait(false);
@@ -450,18 +488,20 @@ public class SlashCommands : ApplicationCommandModule
             }
             catch (Exception e)
             {
-	            Log.Fatal(e.ToString());
-	            msg = new DiscordWebhookBuilder();
-	            msg.WithContent(
-		            $"Made 1 playlist successfully but failed to make time-based playlists for this channel, {Program.BotOwnerDiscordUser?.Mention} any ideas?");
-	            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                Log.Fatal(e.ToString());
+                msg = new DiscordWebhookBuilder();
+                msg.WithContent(
+                    $"Made 1 playlist successfully but failed to make time-based playlists for this channel, {Program.BotOwnerDiscordUser?.Mention} any ideas?");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
                 throw;
             }
 
             try
             {
-                await Database.Instance.InsertRow(Database.MainTableName, ctx.Guild.Id, playlistId, weeklyPlaylistId, monthlyPlaylistId, yearlyPlaylistId, bindChannel.Id).ConfigureAwait(false);
-                msg.WithContent($"Successfully watching channel {bindChannel.Mention} and adding to playlist {YoutubeAPIs.IdToPlaylist(playlistId)}");
+                await Database.Instance.InsertRow(Database.MainTableName, ctx.Guild.Id, playlistId, weeklyPlaylistId,
+                    monthlyPlaylistId, yearlyPlaylistId, bindChannel.Id).ConfigureAwait(false);
+                msg.WithContent(
+                    $"Successfully watching channel {bindChannel.Mention} and adding to playlist {YoutubeAPIs.IdToPlaylist(playlistId)}");
             }
             catch (Exception exception)
             {
@@ -481,10 +521,15 @@ public class SlashCommands : ApplicationCommandModule
         [SlashCommand("moveplaylist", "Moves existing watch from one channel to another")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public static async Task MovePlaylist(InteractionContext ctx,
-            [Option("OriginalChannel", "Channel to move the playlist from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel originalChannel,
-            [Option("BindChannel", "Channel to bind the playlist to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel bindChannel)
+            [Option("OriginalChannel", "Channel to move the playlist from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel originalChannel,
+            [Option("BindChannel", "Channel to bind the playlist to")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel bindChannel)
         {
-            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
             if (originalChannel.Equals(bindChannel))
             {
@@ -495,8 +540,8 @@ public class SlashCommands : ApplicationCommandModule
 
             try
             {
-                Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
-	                channelId: originalChannel.Id).ConfigureAwait(false);
+                Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
+                    channelId: originalChannel.Id).ConfigureAwait(false);
                 if (rowData is null)
                 {
                     msg.WithContent("There is no playlist connected to this channel");
@@ -505,11 +550,12 @@ public class SlashCommands : ApplicationCommandModule
                 }
 
                 bool wasChanged =
-                    await Database.Instance.ChangeChannelId(Database.MainTableName, originalChannel.Id, bindChannel.Id).ConfigureAwait(false);
+                    await Database.Instance.ChangeChannelId(Database.MainTableName, originalChannel.Id, bindChannel.Id)
+                        .ConfigureAwait(false);
                 if (!wasChanged) Log.Error($"Fuck, {new StackFrame().GetFileLineNumber()}");
 
-                rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
-	                channelId: bindChannel.Id).ConfigureAwait(false);
+                rowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
+                    channelId: bindChannel.Id).ConfigureAwait(false);
                 if (rowData is null)
                 {
                     msg.WithContent(
@@ -519,7 +565,9 @@ public class SlashCommands : ApplicationCommandModule
                     await ctx.EditResponseAsync(msg).ConfigureAwait(false);
                     return;
                 }
-                msg.WithContent($"Playlist {(string.IsNullOrEmpty(rowData.PlaylistId) ? "not set up but" : YoutubeAPIs.IdToPlaylist(rowData.PlaylistId))} watch successfully moved from {originalChannel.Mention} to {bindChannel.Mention}");
+
+                msg.WithContent(
+                    $"Playlist {(string.IsNullOrEmpty(rowData.PlaylistId) ? "not set up but" : YoutubeAPIs.IdToPlaylist(rowData.PlaylistId))} watch successfully moved from {originalChannel.Mention} to {bindChannel.Mention}");
             }
             catch (PostgresException pgException)
             {
@@ -540,17 +588,22 @@ public class SlashCommands : ApplicationCommandModule
             await ctx.EditResponseAsync(msg).ConfigureAwait(false);
         }
 
-        [SlashCommand("deleteplaylist", "Remove channel watch&optionally delete playlist. Move existing with `/admin moveplaylist`")]
+        [SlashCommand("deleteplaylist",
+            "Remove channel watch&optionally delete playlist. Move existing with `/admin moveplaylist`")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public static async Task DeletePlaylist(InteractionContext ctx,
-            [Option("WatchChannel", "Channel to remove watch from")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
-            [Option("DeletePlaylist", "Should the playlist be deleted?")] bool shouldDeletePlaylist = true)
+            [Option("WatchChannel", "Channel to remove watch from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel watchChannel,
+            [Option("DeletePlaylist", "Should the playlist be deleted?")]
+            bool shouldDeletePlaylist = true)
         {
-            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
             Database.PlaylistData? rowData =
-                await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
-	                channelId: watchChannel.Id).ConfigureAwait(false);
+                await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
+                    channelId: watchChannel.Id).ConfigureAwait(false);
             if (rowData is null)
             {
                 msg.WithContent("There is no playlist connected to this channel");
@@ -562,8 +615,11 @@ public class SlashCommands : ApplicationCommandModule
             try
             {
                 //TODO: Delete channel link but do not delete playlist
-                if (await Database.Instance.DeleteRowWithServer(Database.MainTableName, ctx.Guild.Id, watchChannel.Id).ConfigureAwait(false))
+                if (await Database.Instance.DeleteRowWithServer(Database.MainTableName, ctx.Guild.Id, watchChannel.Id)
+                        .ConfigureAwait(false))
+                {
                     msgResponse += $"Successfully removed watch on {watchChannel.Mention}\n";
+                }
 
                 if (shouldDeletePlaylist)
                 {
@@ -573,49 +629,63 @@ public class SlashCommands : ApplicationCommandModule
                     }
                     else
                     {
-                        bool didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.PlaylistId).ConfigureAwait(false);
-                        if (didDeletePlaylist)
-                            msgResponse += "Successfully deleted playlist\n";
-                        else
-                            msgResponse +=
-                                $"Failed to delete playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
+                        bool didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.PlaylistId)
+                            .ConfigureAwait(false);
+                        //Does not matter if time based deletes are successful tbh
+                        if (string.IsNullOrWhiteSpace(rowData.WeeklyPlaylistID))
+                        {
+                            await YoutubeAPIs.Instance.DeletePlaylist(rowData.WeeklyPlaylistID).ConfigureAwait(false);
+                        }
+
+                        if (string.IsNullOrWhiteSpace(rowData.MonthlyPlaylistID))
+                        {
+                            await YoutubeAPIs.Instance.DeletePlaylist(rowData.MonthlyPlaylistID).ConfigureAwait(false);
+                        }
+
+                        if (string.IsNullOrWhiteSpace(rowData.YearlyPlaylistID))
+                        {
+                            await YoutubeAPIs.Instance.DeletePlaylist(rowData.YearlyPlaylistID).ConfigureAwait(false);
+                        }
+
+                        msgResponse += didDeletePlaylist
+                            ? "Successfully deleted playlist\n"
+                            : $"Failed to delete playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
                     }
                 }
                 else
                 {
-                    if (rowData.PlaylistId != null)
-                        msgResponse +=
-                            $"Playlist will continue to exist at {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}. Keep this link, you will never be able to retrieve it again later\n";
-                    else
-                        msgResponse += "This channel had no playlist so there is nothing to save\n";
+                    msgResponse +=
+                        $"Playlist will continue to exist at {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}. Keep this link, you will never be able to retrieve it again later\n";
                 }
 
                 if (rowData?.PlaylistId is not null)
                 {
-	                ulong channelId;
-	                List<Database.VideoData> playlistEntries = await Database.Instance.GetPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
-	                foreach (Database.VideoData? playlistEntry in playlistEntries)
-	                {
-		                if (playlistEntry?.ChannelId is null)
-		                {
-			                if (rowData.ChannelId is null)
-			                {
-				                Log.Error("No Channel found, cannot delete message");
+                    ulong channelId;
+                    List<Database.VideoData> playlistEntries =
+                        await Database.Instance.GetPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
+                    foreach (Database.VideoData? playlistEntry in playlistEntries)
+                    {
+                        if (playlistEntry?.ChannelId is null)
+                        {
+                            if (rowData.ChannelId is null)
+                            {
+                                Log.Error("No Channel found, cannot delete message");
                                 continue;
-			                }
-			                else
-			                {
-				                channelId = rowData.ChannelId.Value;
-			                }
-		                }
-		                else
-		                {
-			                channelId = playlistEntry.ChannelId.Value;
-		                }
-                        await MarkNoVoting(channelId, playlistEntry!.MessageId).ConfigureAwait(false);
-	                }
+                            }
+                            else
+                            {
+                                channelId = rowData.ChannelId.Value;
+                            }
+                        }
+                        else
+                        {
+                            channelId = playlistEntry.ChannelId.Value;
+                        }
 
-	                Task<int> nRows = Database.Instance.DeleteVideosSubmittedFromPlaylist(rowData.PlaylistId);
+                        await MarkNoVoting(channelId, playlistEntry!.MessageId).ConfigureAwait(false);
+                    }
+
+                    Task<int> nRows = Database.Instance.DeleteVideosSubmittedFromPlaylist(rowData.PlaylistId);
                 }
 
                 msg.WithContent(msgResponse);
@@ -635,108 +705,461 @@ public class SlashCommands : ApplicationCommandModule
         }
 
         [SlashCommand("deletevideo",
-	        "Removes given video from the given channel's playlist")]
+            "Removes given video from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
         public static async Task DeleteVideo(InteractionContext ctx,
-	        [Option("PlaylistChannel", "Channel that the playlist is bound to")]
-	        [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
-	        DiscordChannel watchChannel,
-	        [Option("Video", "The video to be removed from the playlist")]
-	        string videoUrl)
+            [Option("PlaylistChannel", "Channel that the playlist is bound to")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel watchChannel,
+            [Option("Video", "The video to be removed from the playlist")]
+            string videoUrl,
+            [Option("BanVideo", "Whether the video is banned from being in this playlist")]
+            bool banVideo = false,
+            [Option("BanVideoServerWide",
+                "Whether to also ban the video from all server playlists, must be used with `BanVideo: true`")]
+            bool banVideoFromServer = false)
         {
-	        await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
-	        DiscordWebhookBuilder msg = new();
-	        Match? match;
-	        if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(videoUrl)).Success &&
-	            match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
-	            !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
-	        {
-		        string id = match.Groups["id"].Value;
-		        Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id,
-			        channelId: watchChannel.Id).ConfigureAwait(false);
-		        if (rowData?.PlaylistId is null)
-		        {
-			        msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");
-			        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-			        return;
-		        }
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            string removeString = "";
+            Match? match;
+            if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(videoUrl))
+                .Success &&
+                match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
+                !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
+            {
+                string id = match.Groups["id"].Value;
+                Database.PlaylistData? rowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id,
+                    channelId: watchChannel.Id).ConfigureAwait(false);
+                if (rowData?.PlaylistId is null)
+                {
+                    msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");
+                    await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                    return;
+                }
 
-		        try
-		        {
-			        string removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
-			        await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
+                Database.VideoData? vidToDelete = await Database.Instance
+                    .GetPlaylistItem(rowData.PlaylistId, videoId: id).ConfigureAwait(false);
+                if (vidToDelete is null)
+                {
+                    msg.WithContent(
+                        $"Video {YoutubeAPIs.IdToVideo(id)} could not be found in {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}");
+                    await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                    return;
+                }
 
-			        Database.VideoData? vidToDelete = await Database.Instance
-					        .GetPlaylistItem(rowData.PlaylistId, videoId: id).ConfigureAwait(false);
+                try
+                {
+                    removeString += $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
+                    await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
 
-			        if (vidToDelete is null)
-			        {
-				        if (await YoutubeAPIs.Instance.RemoveFromPlaylist(rowData.PlaylistId, id).ConfigureAwait(false) > 0)
-				        {
-					        removeString += $"Removed {YoutubeAPIs.IdToVideo(id)}\n";
-					        goto successfulRemoval;
+                    if (vidToDelete is null)
+                    {
+                        if (await YoutubeAPIs.Instance.RemoveFromPlaylist(rowData.PlaylistId, id)
+                                .ConfigureAwait(false) > 0)
+                        {
+                            removeString += $"Removed {YoutubeAPIs.IdToVideo(id)}\n";
+                            goto successfulRemoval;
                         }
-				        msg.WithContent(removeString + "No Videos Found");
-				        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-				        return;
-			        }
 
-			        removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!).ConfigureAwait(false);
+                        msg.WithContent(removeString + "No Videos Found");
+                        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                        return;
+                    }
+
+                    removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!)
+                        .ConfigureAwait(false);
                     successfulRemoval:
-			        await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
-		        }
-		        catch (Exception e)
-		        {
-			        Log.Error(e.ToString());
-			        Debugger.Break();
-			        msg = new DiscordWebhookBuilder();
-			        msg.WithContent(
-				        $"Error removing {YoutubeAPIs.IdToVideo(id)} from {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}");
-			        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-		        }
-	        }
-	        else
-	        {
-		        msg.WithContent(
-			        $"Cannot extract video id, url given does not match `regex\n{Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}`");
-		        await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-	        }
+                    await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    Log.Error(e.ToString());
+                    Debugger.Break();
+                    msg = new DiscordWebhookBuilder();
+                    msg.WithContent(
+                        $"Error removing {YoutubeAPIs.IdToVideo(id)} from {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}");
+                    await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                }
+
+                if (banVideo)
+                {
+                    Database.BannedVideoData bannedVideo = new()
+                    {
+                        BannedFromServer = banVideoFromServer,
+                        PlaylistId = rowData.PlaylistId,
+                        ServerId = ctx.Guild.Id,
+                        UserId = vidToDelete.UserId,
+                        VideoId = vidToDelete.VideoId
+                    };
+                    Database.DiscordDatabaseContext database = new();
+                    await database.AddAsync(bannedVideo).ConfigureAwait(false);
+                    await database.SaveChangesAsync().ConfigureAwait(false);
+                    removeString += $"Banned from {(banVideoFromServer ? "server" : "playlist")}";
+                }
+                else if (banVideoFromServer)
+                {
+                    removeString +=
+                        "You specified `BanVideoServerWide: true` but did not specify `BanVideo: true`, you must specify both or use `/admin banvideo` to ban them";
+                }
+
+                await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
+            }
+            else
+            {
+                msg.WithContent(
+                    $"Cannot extract video id, url given does not match `javascript\n{Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}`");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+            }
         }
-    
+
 
         [SlashCommand("deleteallfromuser",
             "Removes all videos submitted by mentioned user from the given channel's playlist")]
         [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
-		[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Used Upstream")]
-		public static async Task DeleteAllFromUser(InteractionContext ctx,
-            [Option("PlaylistChannel", "Channel that the playlist is bound to")] [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)] DiscordChannel watchChannel,
-            [Option("User", "The user to delete all from")] DiscordUser badUser,
-	        [Option("DeleteSubmissionMessages", "Delete User's Messages? If not, submissions will only be deleted from the playlist, not the channel")] bool deleteMessage = true)
+        public static async Task DeleteAllFromUser(InteractionContext ctx,
+            [Option("PlaylistChannel", "Channel that the playlist is bound to")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel watchChannel,
+            [Option("User", "The user to delete all from")]
+            DiscordUser badUser,
+            [Option("DeleteSubmissionMessages",
+                "Delete User's Messages? If not, submissions will only be deleted from the playlist, not the channel")]
+            bool deleteMessage = true,
+            [Option("BanUser", "Whether the user is banned from adding to this playlist")]
+            bool banUser = false,
+            [Option("BanUserServerWide",
+                "Whether to also ban the User from adding to all server playlists, must be used with `BanUser: true`")]
+            bool banUserFromServer = false)
         {
-            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource).ConfigureAwait(false);
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
-            Database.PlaylistData? rowData = await Database.Instance.GetPlaylistsRowData(serverId: ctx.Guild.Id, channelId: watchChannel.Id).ConfigureAwait(false);
+            Database.PlaylistData? rowData = await Database.Instance
+                .GetPlaylistRowData(serverId: ctx.Guild.Id, channelId: watchChannel.Id).ConfigureAwait(false);
             if (rowData?.PlaylistId is null)
             {
                 msg.WithContent("Channel specified has no playlist connected, cannot delete videos from it");
                 await ctx.EditResponseAsync(msg).ConfigureAwait(false);
                 return;
-			}
+            }
+
             string removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
             await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
 
-            List<Database.VideoData> vidsToDelete = await Database.Instance.GetPlaylistItems(rowData.PlaylistId, userId: badUser.Id).ConfigureAwait(false);
+            List<Database.VideoData> vidsToDelete = await Database.Instance
+                .GetPlaylistItems(rowData.PlaylistId, userId: badUser.Id).ConfigureAwait(false);
             if (vidsToDelete.Count == 0)
             {
-	            msg.WithContent(removeString + "No Videos Found");
-	            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
-	            return;
+                msg.WithContent(removeString + "No Videos Found");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+                return;
             }
+
             foreach (Database.VideoData vidToDelete in vidsToDelete)
             {
-	            removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!).ConfigureAwait(false);
+                removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!, deleteMessage)
+                    .ConfigureAwait(false);
             }
+
+            if (banUser)
+            {
+                Database.BannedUserData bannedUser = new()
+                {
+                    BannedFromServer = banUserFromServer,
+                    PlaylistId = rowData.PlaylistId,
+                    ServerId = ctx.Guild.Id,
+                    UserId = badUser.Id
+                };
+                Database.DiscordDatabaseContext database = new();
+                await database.AddAsync(bannedUser).ConfigureAwait(false);
+                await database.SaveChangesAsync().ConfigureAwait(false);
+                removeString += $"Banned from submitting to {(banUserFromServer ? "server" : "playlist")}";
+            }
+            else if (banUserFromServer)
+            {
+                removeString +=
+                    "You specified `BanUserServerWide: true` but did not specify `BanUser: true`, you must specify both or use `/admin banuser` to ban them";
+            }
+
             await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
+        }
+
+        [SlashCommand("banuser",
+            "Bans the User from submitting to the given channel's playlist, or the every playlist on the server")]
+        [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
+        public static async Task BanUser(InteractionContext ctx,
+            [Option("User", "The user to ban")] DiscordUser badUser,
+            [Option("PlaylistChannel", "Channel of the playlist to ban them from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel? playlistChannel = null,
+            [Option("ServerWide",
+                "Whether to also ban the user from adding to any server playlist")]
+            bool banUserFromServer = false)
+        {
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            if (playlistChannel is null && banUserFromServer is false)
+            {
+                await ctx.EditResponseAsync(
+                        msg.WithContent("Must either specify `PlaylistChannel` or set `ServerWide` to `true`"))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+
+            await using Database.DiscordDatabaseContext database = new();
+            if (playlistChannel is not null)
+            {
+                // Database.PlaylistData? playlistRowData = await Database.Instance.GetPlaylistRowData(serverId: ctx.Guild.Id, channelId: playlistChannel.Id).ConfigureAwait(false);
+                string? playlistId = await database.PlaylistsAdded.AsNoTracking()
+                    .Where(pa => pa.ServerId == ctx.Guild.Id && pa.ChannelId == playlistChannel.Id)
+                    .Select(pa => pa.PlaylistId)
+                    .FirstOrDefaultAsync().ConfigureAwait(false);
+                if (playlistId is null)
+                {
+                    await ctx.EditResponseAsync(
+                            msg.WithContent($"{playlistChannel.Mention} is not set up as a playlist channel"))
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                Database.BannedUserData bannedUserData = new()
+                {
+                    BannedFromServer = banUserFromServer,
+                    PlaylistId = playlistId,
+                    ServerId = ctx.Guild.Id,
+                    UserId = badUser.Id
+                };
+                await database.AddAsync(bannedUserData).ConfigureAwait(false);
+            }
+            else
+            {
+
+                Database.BannedUserData bannedUserData = new()
+                {
+                    BannedFromServer = banUserFromServer,
+                    PlaylistId = null,
+                    ServerId = ctx.Guild.Id,
+                    UserId = badUser.Id
+                };
+                await database.AddAsync(bannedUserData).ConfigureAwait(false);
+            }
+
+            await database.SaveChangesAsync().ConfigureAwait(false);
+            msg.WithContent($"Banned user {badUser.Mention} {(banUserFromServer ? "from submitting to the server" : $"from playlist {playlistChannel.Mention}")}");
+            await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+        }
+
+        [SlashCommand("banvideo",
+            "Bans the Video from submitting to the given channel's playlist, or every playlist on the server")]
+        [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
+        public static async Task BanVideo(InteractionContext ctx,
+            [Option("Video", "The video to ban")] string badVideo,
+            [Option("PlaylistChannel", "Channel of the playlist to ban it from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel? playlistChannel = null,
+            [Option("ServerWide",
+                "Whether to ban the video from being added to any server playlist")]
+            bool banVideoFromServer = false)
+        {
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            if (playlistChannel is null && banVideoFromServer is false)
+            {
+                await ctx.EditResponseAsync(
+                        msg.WithContent("Must either specify `PlaylistChannel` or set `ServerWide` to `true`"))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            Match? match;
+            if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(badVideo))
+                .Success &&
+                match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
+                !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
+            {
+                string videoId = match.Groups["id"].Value;
+
+                await using Database.DiscordDatabaseContext database = new();
+                if (playlistChannel is not null)
+                {
+                    string? playlistId = await database.PlaylistsAdded.AsNoTracking()
+                        .Where(pa => pa.ServerId == ctx.Guild.Id && pa.ChannelId == playlistChannel.Id)
+                        .Select(pa => pa.PlaylistId)
+                        .FirstOrDefaultAsync().ConfigureAwait(false);
+                    if (playlistId is null)
+                    {
+                        await ctx.EditResponseAsync(
+                                msg.WithContent($"{playlistChannel.Mention} is not set up as a playlist channel"))
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    Database.BannedVideoData bannedVideoData = new()
+                    {
+                        BannedFromServer = banVideoFromServer,
+                        PlaylistId = playlistId,
+                        ServerId = ctx.Guild.Id,
+                        VideoId = videoId
+                    };
+                    await database.AddAsync(bannedVideoData).ConfigureAwait(false);
+                }
+                else
+                {
+
+                    Database.BannedVideoData bannedVideoData = new()
+                    {
+                        BannedFromServer = banVideoFromServer,
+                        PlaylistId = null,
+                        ServerId = ctx.Guild.Id,
+                        VideoId = videoId
+                    };
+                    await database.AddAsync(bannedVideoData).ConfigureAwait(false);
+                }
+
+                await database.SaveChangesAsync().ConfigureAwait(false);
+                msg.WithContent($"Banned Video {badVideo} {(banVideoFromServer ? "from being submitted to the server" : $"from playlist {playlistChannel.Mention}")}");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+            }
+            else
+            {
+                msg.WithContent(
+                    $"Cannot extract video id, url given does not match `javascript\n{Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}`");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+            }
+        }
+
+        [SlashCommand("Unbanvideo",
+            "UnBans the Video from submitting to the given channel's playlist, or every playlist on the server")]
+        [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
+        public static async Task UnbanVideo(InteractionContext ctx,
+            [Option("Video", "The video to unban")]
+            string badVideo,
+            [Option("PlaylistChannel", "Channel of the playlist to unban it from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel? playlistChannel = null,
+            [Option("ServerWide",
+                "Whether to unban the video from being added to any server playlist")]
+            bool unbanVideoFromServer = false)
+        {
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            if (playlistChannel is null && unbanVideoFromServer is false)
+            {
+                await ctx.EditResponseAsync(
+                        msg.WithContent("Must either specify `PlaylistChannel` or set `ServerWide` to `true`"))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            Match? match;
+            if ((match = Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex.Match(badVideo))
+                .Success &&
+                match.Groups["id"].Value is not "playlist" or "watch" or "channel" &&
+                !string.IsNullOrWhiteSpace(match.Groups["id"].Value))
+            {
+                string videoId = match.Groups["id"].Value;
+                Database.DiscordDatabaseContext database = new();
+                int unbans;
+                if (unbanVideoFromServer)
+                {
+                    //Delete all entries of this video from this server
+                    unbans = await database.BannedVideos
+                        .Where(bv => bv.ServerId == ctx.Guild.Id && bv.VideoId == videoId)
+                        .DeleteAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    string? playlistId = await database.PlaylistsAdded.AsNoTracking()
+                        .Where(pa => pa.ServerId == ctx.Guild.Id && pa.ChannelId == playlistChannel!.Id)
+                        .Select(pa => pa.PlaylistId)
+                        .FirstOrDefaultAsync().ConfigureAwait(false);
+                    if (playlistId is null)
+                    {
+                        await ctx.EditResponseAsync(
+                                msg.WithContent($"{playlistChannel.Mention} is not set up as a playlist channel"))
+                            .ConfigureAwait(false);
+                        return;
+                    }
+
+                    unbans = await database.BannedVideos.Where(bv =>
+                            bv.ServerId == ctx.Guild.Id && bv.PlaylistId == playlistId && bv.VideoId == videoId &&
+                            bv.BannedFromServer == false)
+                        .DeleteAsync().ConfigureAwait(false);
+                }
+
+                // unbans = await database.SaveChangesAsync().ConfigureAwait(false);
+                await ctx.EditResponseAsync(
+                        msg.WithContent($"Removed {unbans} ban{(unbans != 1 ? 's' : "")} for {badVideo}"))
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                msg.WithContent(
+                    $"Cannot extract video id, url given does not match `javascript\n{Program.MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}`");
+                await ctx.EditResponseAsync(msg).ConfigureAwait(false);
+            }
+        }
+
+        [SlashCommand("Unbanuser",
+            "UnBans the User from submitting to the given channel's playlist, or every playlist on the server")]
+        [RequireBotAdminPrivilege(Program.BotOwnerId, Permissions.Administrator)]
+        public static async Task UnbanUser(InteractionContext ctx,
+            [Option("User", "The user to unban")] DiscordUser badUser,
+            [Option("PlaylistChannel", "Channel of the playlist to unban them from")]
+            [ChannelTypes(ChannelType.Text, ChannelType.PublicThread)]
+            DiscordChannel? playlistChannel = null,
+            [Option("ServerWide",
+                "Whether to unban the user from adding to any server playlist")]
+            bool unbanUserFromServer = false)
+        {
+            await ctx.CreateResponseAsync(InteractionResponseType.DeferredChannelMessageWithSource)
+                .ConfigureAwait(false);
+            DiscordWebhookBuilder msg = new();
+            if (playlistChannel is null && unbanUserFromServer is false)
+            {
+                await ctx.EditResponseAsync(
+                        msg.WithContent("Must either specify `PlaylistChannel` or set `ServerWide` to `true`"))
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            Database.DiscordDatabaseContext database = new();
+            int unbans;
+            if (unbanUserFromServer)
+            {
+                //Delete all entries of this user from this server
+                unbans = await database.BannedUsers.Where(bv => bv.ServerId == ctx.Guild.Id && bv.UserId == badUser.Id)
+                    .DeleteAsync().ConfigureAwait(false);
+            }
+            else
+            {
+                string? playlistId = await database.PlaylistsAdded.AsNoTracking()
+                    .Where(pa => pa.ServerId == ctx.Guild.Id && pa.ChannelId == playlistChannel!.Id)
+                    .Select(pa => pa.PlaylistId)
+                    .FirstOrDefaultAsync().ConfigureAwait(false);
+                if (playlistId is null)
+                {
+                    await ctx.EditResponseAsync(
+                            msg.WithContent($"{playlistChannel.Mention} is not set up as a playlist channel"))
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                unbans = await database.BannedUsers.Where(bu =>
+                        bu.ServerId == ctx.Guild.Id && bu.PlaylistId == playlistId && bu.BannedFromServer == false)
+                    .DeleteAsync().ConfigureAwait(false);
+            }
+            // unbans = await database.SaveChangesAsync().ConfigureAwait(false);
+            await ctx.EditResponseAsync(
+                    msg.WithContent($"Removed {unbans} ban{(unbans != 1 ? 's' : "")} from {badUser.Mention}"))
+                .ConfigureAwait(false);
+
         }
     }
 
@@ -751,7 +1174,7 @@ public class SlashCommands : ApplicationCommandModule
         }
 	    catch (NotFoundException)
 	    {
-
+            //If Message not found, do nothing
 	    }
 	    catch (UnauthorizedException e)
 	    {
@@ -764,14 +1187,24 @@ public class SlashCommands : ApplicationCommandModule
 	    string removeString = "";
 	    try
 	    {
-		    int vidsRemoved = await YoutubeAPIs.Instance.RemoveFromPlaylist(playlistId, entry!.VideoId).ConfigureAwait(false);
+            // int vidsRemoved = await YoutubeAPIs.Instance.RemoveFromPlaylist(playlistId, entry!.VideoId).ConfigureAwait(false);
+            int vidsRemoved = 0;
+            try
+            {
+                await YoutubeAPIs.Instance.RemovePlaylistItem(entry.PlaylistItemId).ConfigureAwait(false);
+                ++vidsRemoved;
+            }
+            catch (Exception e)
+            {
+                Log.Error(e.ToString());
+            }
 		    if (vidsRemoved > 0)
 		    {
 			    if (vidsRemoved == 1)
-				    removeString += $"Removed {YoutubeAPIs.IdToVideo(entry.VideoId!)}\n";
+				    removeString += $"Removed <{YoutubeAPIs.IdToVideo(entry.VideoId!)}>\n";
 			    else
 			    {
-				    removeString += $"Removed {vidsRemoved} videos matching {YoutubeAPIs.IdToVideo(entry.VideoId!)}\n";
+				    removeString += $"Removed {vidsRemoved} videos matching <{YoutubeAPIs.IdToVideo(entry.VideoId!)}>\n";
 			    }
 		    }
 		    else
@@ -780,7 +1213,40 @@ public class SlashCommands : ApplicationCommandModule
 
 		    }
 
-		    Task<int> rowsDeleted = Database.Instance.DeleteVideoSubmitted(playlistId, messageId:entry.MessageId);
+            try
+            {
+                if(!string.IsNullOrWhiteSpace(entry.WeeklyPlaylistItemId))
+                    await YoutubeAPIs.Instance.RemovePlaylistItem(entry.WeeklyPlaylistItemId).ConfigureAwait(false);
+                removeString += "Removed from weekly too\n";
+            }
+            catch (Exception e)
+            {
+                Log.Error(e.ToString());
+            }
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(entry.MonthlyPlaylistItemId))
+                    await YoutubeAPIs.Instance.RemovePlaylistItem(entry.MonthlyPlaylistItemId).ConfigureAwait(false);
+                removeString += "Removed from monthly too\n";
+            }
+            catch (Exception e)
+            {
+                Log.Error(e.ToString());
+            }
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(entry.YearlyPlaylistItemId))
+                    await YoutubeAPIs.Instance.RemovePlaylistItem(entry.YearlyPlaylistItemId).ConfigureAwait(false);
+                removeString += "Removed from yearly too\n";
+            }
+            catch (Exception e)
+            {
+                Log.Error(e.ToString());
+            }
+
+            //Remove From Database
+            var rowsDeleted = await Database.Instance.DeleteVideoSubmitted(playlistId, messageId:entry.MessageId).ConfigureAwait(false);
+            //Delete Associated Message
 		    if (removeMessage)
 		    {
 			    try
@@ -788,7 +1254,7 @@ public class SlashCommands : ApplicationCommandModule
 				    DiscordMessage? msgToRemove =
 					    await (await Program.Discord.GetChannelAsync(entry.ChannelId!.Value).ConfigureAwait(false)).GetMessageAsync(
 						    entry.MessageId).ConfigureAwait(false);
-				    await msgToRemove.DeleteAsync("Entry not allowed, removed by a mod via the bot").ConfigureAwait(false);
+				    await msgToRemove.DeleteAsync("Entry not allowed, removed by an admin via the bot").ConfigureAwait(false);
 			    }
 			    catch (Exception)
 			    {
