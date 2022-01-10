@@ -23,10 +23,10 @@ namespace DiscordMusicRecs
 		}
 		public string InviteUrl { get; set; } = null!;
 		public string YoutubeSecretsFile { get; set; } = null!;
-		public static Configuration ReadConfig(string congigPath = "config.json")
+		public static Configuration ReadConfig(string configPath = "config.json")
 		{
-			string jsonstring = File.ReadAllText(congigPath);
-			Configuration configuration = JsonSerializer.Deserialize<Configuration>(jsonstring) ?? throw new InvalidOperationException("Configuration cannot be null");
+			string jsonString = File.ReadAllText(configPath);
+			Configuration configuration = JsonSerializer.Deserialize<Configuration>(jsonString) ?? throw new InvalidOperationException("Configuration cannot be null");
 			return configuration;
 		}
 	}

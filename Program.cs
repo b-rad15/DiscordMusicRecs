@@ -352,8 +352,12 @@ internal class Program
 	    if (!Directory.Exists(logPath))
 		    Directory.CreateDirectory(logPath);
 	    Log.Logger = new LoggerConfiguration()
-		    .MinimumLevel.Verbose()
-		    .WriteTo.Console()
+#if DEBUG
+            .MinimumLevel.Verbose()
+#else
+            .MinimumLevel.Information()
+#endif
+            .WriteTo.Console()
 		    .WriteTo.Async(a=> a.File(Path.Combine(logPath, ".log"), rollingInterval: RollingInterval.Day))
 		    .CreateLogger();
 	    Log.Information("Starting");

@@ -84,10 +84,10 @@ internal class YoutubeAPIs
 	private YouTubeService? youTubeService;
 	private bool initialized = false;
 	private UserCredential credential = null!;
-    private string ApplicationName;
+    private readonly string ApplicationName;
 	public async Task InitializeAutomatic()
 	{
-		FileStream stream = new("client_secret_youtube.json", FileMode.Open, FileAccess.Read);
+		FileStream stream = new(Program.Config.YoutubeSecretsFile, FileMode.Open, FileAccess.Read);
 		await using (stream.ConfigureAwait(false))
 		{
 			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream).ConfigureAwait(false)).Secrets,
