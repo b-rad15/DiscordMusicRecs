@@ -328,6 +328,7 @@ internal class Program
                     else
                     {
 	                    Log.Debug($"Message \"{e.Message.Content}\" does not match {MyHeavilyModifiedButTheBaseWasCopiedStackOverflowYouTubeRegex}");
+                        //TODO: replace with rowData option
                         if (removeNonUrls)
                         {
                             await e.Message.DeleteAsync().ConfigureAwait(false);
