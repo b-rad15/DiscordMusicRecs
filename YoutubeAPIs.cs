@@ -2,58 +2,407 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Mime;
+using System.Net.Sockets;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Google;
 using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2.Flows;
+using Google.Apis.Auth.OAuth2.Responses;
+using Google.Apis.Http;
 using Google.Apis.Services;
 using Google.Apis.Upload;
 using Google.Apis.Util.Store;
 using Google.Apis.YouTube.v3;
 using Google.Apis.YouTube.v3.Data;
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
 using Serilog;
+using JsonSerializer = System.Text.Json.JsonSerializer;
 
+[assembly: InternalsVisibleTo("DiscordMusicRecsTest")]
 namespace DiscordMusicRecs;
 
 // ReSharper disable once InconsistentNaming
 internal class YoutubeAPIs
 {
+    [SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Must Match Json"),
+     SuppressMessage("ReSharper", "InconsistentNaming", Justification = "Must Match Json")]
+    internal class YouTubeClientSecret
+	{
+		public string client_id { get; set; } = null!;
+		public string project_id { get; set; } = null!;
+        public string auth_uri { get; set; } = null!;
+		public string token_uri { get; set; } = null!;
+		public string auth_provider_x509_cert_url { get; set; } = null!;
+		public string client_secret { get; set; } = null!;
+		public string[] redirect_uris { get; set; } = null!;
+
+		public static async Task<YouTubeClientSecret> ReadFromFileAsync(string secretsFilePath) =>
+			await ReadFromFileAsync(new FileInfo(secretsFilePath)).ConfigureAwait(false);
+		public static async Task<YouTubeClientSecret> ReadFromFileAsync(FileInfo secretsFile)
+		{
+			if(!secretsFile.Exists) throw new ArgumentException("Secrets File does not exist");
+			if(secretsFile.Length == 0) throw new ArgumentException("Secrets File is empty");
+			await using FileStream secretsFileStream = secretsFile.OpenRead();
+			YouTubeClientSecret? secretsData = await JsonSerializer.DeserializeAsync<YouTubeClientSecret>(secretsFileStream).ConfigureAwait(false);
+			if (secretsData == null)
+			{
+				throw new ArgumentException("Secrets File contained no valid data");
+			}
+			return secretsData;
+		}
+		public static YouTubeClientSecret ReadFromFile(FileInfo secretsFile)
+		{
+			if (!secretsFile.Exists) throw new ArgumentException("Secrets File does not exist");
+			if (secretsFile.Length == 0) throw new ArgumentException("Secrets File is empty");
+			YouTubeClientSecret? secretsData =
+				JsonSerializer.Deserialize<YouTubeClientSecret>(File.ReadAllText(secretsFile.FullName));
+			if (secretsData == null)
+			{
+				throw new ArgumentException("Secrets File contained no valid data");
+			}
+			return secretsData;
+		}
+	}
+
     private YoutubeAPIs()
     {
+        ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}";
     }
 
-    public static YoutubeAPIs Instance { get; } = new YoutubeAPIs();
+    public static YoutubeAPIs Instance { get; } = new();
     private Playlist? recommendationPlaylist;
 	private YouTubeService? youTubeService;
 	private bool initialized = false;
-	public async Task Initialize()
+	private UserCredential credential = null!;
+    private readonly string ApplicationName;
+	public async Task InitializeAutomatic()
 	{
-		UserCredential credential;
-		var stream = new FileStream("client_secret_youtube.json", FileMode.Open, FileAccess.Read);
+		FileStream stream = new(Program.Config.YoutubeSecretsFile, FileMode.Open, FileAccess.Read);
 		await using (stream.ConfigureAwait(false))
 		{
 			credential = await GoogleWebAuthorizationBroker.AuthorizeAsync((await GoogleClientSecrets.FromStreamAsync(stream).ConfigureAwait(false)).Secrets,
 				// This OAuth 2.0 access scope allows for full read/write access to the
 				// authenticated user's account.
-				new[] { YouTubeService.Scope.Youtube},
+				new[] { YouTubeService.Scope.Youtube },
 				"user",
 				CancellationToken.None,
-				new FileDataStore(GetType().ToString())
+				new FileDataStore(ApplicationName)
 			).ConfigureAwait(false);
 		}
-
-		youTubeService = new YouTubeService(new BaseClientService.Initializer()
-		{
-			HttpClientInitializer = credential,
-			ApplicationName = GetType().ToString() + Dns.GetHostName() + Program.Config.PostgresConfig.DbName
-		});
 		initialized = true;
 	}
 
-    
+
+
+
+
+
+
+#if manualYoutubeAPIAuth
+    public struct UserAndAccessToken
+	{
+        public string User { get; }
+        public string AccessToken { get; }
+
+        public UserAndAccessToken(string user, string accessToken)
+        {
+	        User = user;
+            AccessToken = accessToken;
+        }
+
+}
+
+    [Obsolete("Poorly Implemented", true)]
+	public async Task Initialize()
+	{
+		YouTubeClientSecret secretsData = await YouTubeClientSecret.ReadFromFileAsync(Program.Config.YoutubeSecretsFile).ConfigureAwait(false);
+		UserAndAccessToken creds = await DoOAuthAsync(secretsData.client_id, secretsData.client_secret).ConfigureAwait(false);
+		youTubeService = new YouTubeService(new BaseClientService.Initializer()
+		{
+			ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.UnsuccessfulResponse503 | ExponentialBackOffPolicy.Exception,
+            // HttpClientInitializer = new UserCredential(new GoogleAuthorizationCodeFlow(), creds.User, new TokenResponse())
+		});
+		initialized = true;
+    }
+
+    // ref http://stackoverflow.com/a/3978040
+    public static int GetRandomUnusedPort()
+	{
+		TcpListener listener = new(IPAddress.Loopback, 0);
+		listener.Start();
+		int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+		listener.Stop();
+		return port;
+	}
+
+	private const string AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
+    private static async Task<UserAndAccessToken> DoOAuthAsync(string clientId, string clientSecret, bool openInBrowser = false)
+    {
+        // Generates state and PKCE values.
+        string state = GenerateRandomDataBase64url(32);
+        string codeVerifier = GenerateRandomDataBase64url(32);
+        string codeChallenge = Base64UrlEncodeNoPadding(Sha256Ascii(codeVerifier));
+        const string codeChallengeMethod = "S256";
+
+        // Creates a redirect URI using an available port on the loopback address.
+        string redirectUri = $"http://{IPAddress.Loopback}:{GetRandomUnusedPort()}/";
+        Log.Information("redirect URI: " + redirectUri);
+
+        // Creates an HttpListener to listen for requests on that redirect URI.
+        HttpListener http = new();
+        http.Prefixes.Add(redirectUri);
+        Log.Information("Listening..");
+        http.Start();
+
+        // Creates the OAuth 2.0 authorization request.
+        string authorizationRequest =
+	        $"{AuthorizationEndpoint}?response_type=code&scope=openid%20profile&redirect_uri={Uri.EscapeDataString(redirectUri)}&client_id={clientId}&state={state}&code_challenge={codeChallenge}&code_challenge_method={codeChallengeMethod}";
+
+        Log.Information(authorizationRequest);
+        if (openInBrowser)
+        {
+	        // Opens request in the browser.
+	        Process.Start(authorizationRequest);
+        }
+        else
+        {
+	        Log.Information("Please click the above link and sign in");
+        }
+
+        // Waits for the OAuth authorization response.
+        HttpListenerContext context = await http.GetContextAsync().ConfigureAwait(false);
+
+#if false
+        // Brings the Console to Focus.
+        BringConsoleToFront();
+#endif
+
+        // Sends an HTTP response to the browser.
+        HttpListenerResponse response = context.Response;
+        string responseString = "<html><head><meta http-equiv='refresh' content='10;url=https://google.com'></head><body>Please return to the app.</body></html>";
+        byte[] buffer = Encoding.UTF8.GetBytes(responseString);
+        response.ContentLength64 = buffer.Length;
+        Stream responseOutput = response.OutputStream;
+        await responseOutput.WriteAsync(buffer).ConfigureAwait(false);
+        responseOutput.Close();
+        http.Stop();
+        Log.Information("HTTP server stopped.");
+
+        // Checks for errors.
+        string? error = context.Request.QueryString.Get("error");
+        if (error != null)
+        {
+            Log.Error($"OAuth authorization error: {error}.");
+            throw new Exception($"OAuth authorization error: {error}.");
+        }
+
+        // extracts the code
+        string? code = context.Request.QueryString.Get("code");
+        string? incomingState = context.Request.QueryString.Get("state");
+
+        if (code is null || incomingState is null)
+        {
+            Log.Error($"Malformed authorization response. {context.Request.QueryString}");
+            throw new Exception($"Malformed authorization response. {context.Request.QueryString}");
+        }
+
+        // Compares the receieved state to the expected value, to ensure that
+        // this app made the request which resulted in authorization.
+        if (incomingState != state)
+        {
+            Log.Error($"Received request with invalid state ({incomingState})");
+            throw new Exception($"Received request with invalid state ({incomingState})");
+        }
+        Log.Information("Authorization code: " + code);
+
+        // Starts the code exchange at the Token Endpoint.
+        return await ExchangeCodeForTokensAsync(code, codeVerifier, redirectUri, clientId, clientSecret).ConfigureAwait(false);
+    }
+
+    static readonly HttpClient httpClient = new();
+    private static async Task<UserAndAccessToken> ExchangeCodeForTokensAsync(string code, string codeVerifier, string redirectUri, string clientId, string clientSecret)
+    {
+        Log.Information("Exchanging code for tokens...");
+
+        // builds the  request
+        string tokenRequestUri = "https://www.googleapis.com/oauth2/v4/token";
+        string tokenRequestBody =
+	        $"code={code}&redirect_uri={Uri.EscapeDataString(redirectUri)}&client_id={clientId}&code_verifier={codeVerifier}&client_secret={clientSecret}&scope=&grant_type=authorization_code";
+        string[] scopes = new String[] { YouTubeService.ScopeConstants.Youtube };
+        Dictionary<string, string> tokenRequestBodyDict = new()
+        {
+	        { "code", code },
+	        { "redirect_uri", Uri.EscapeDataString(redirectUri) },
+	        { "client_id", clientId },
+	        { "code_verifier", codeVerifier },
+	        { "client_secret", clientSecret },
+	        { "grant_type", "offline" },
+	        { "scope", string.Join(' ', scopes)}
+        };
+        
+        // send request with HttpClient
+        FormUrlEncodedContent content = new(tokenRequestBodyDict);
+        httpClient.DefaultRequestHeaders.Add("Accept",
+	        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+        HttpResponseMessage resMessage = await httpClient.PostAsync(tokenRequestUri, content).ConfigureAwait(false);
+        //Read body
+        try
+        {
+	        string resText = await resMessage.Content.ReadAsStringAsync().ConfigureAwait(false);
+	        dynamic? tokenEndpointDecoded = JsonSerializer.Deserialize<dynamic>(resText);
+	        string accessToken = tokenEndpointDecoded.access_token;
+	        string user = await RequestUserInfoAsync(accessToken).ConfigureAwait(false);
+	        return new UserAndAccessToken(user, accessToken);
+        }
+        catch (WebException e)
+        {
+	        if (e.Status == WebExceptionStatus.ProtocolError)
+	        {
+		        if (e.Response is HttpWebResponse response)
+		        {
+			        Log.Error("HTTP: " + response.StatusCode);
+			        using StreamReader reader = new(response.GetResponseStream());
+			        // reads response body
+			        string responseText = await reader.ReadToEndAsync().ConfigureAwait(false);
+			        Log.Error(responseText);
+		        }
+	        }
+	        throw;
+        }
+#if false
+        // sends the request
+        HttpWebRequest tokenRequest = (HttpWebRequest)WebRequest.Create(tokenRequestUri);
+        tokenRequest.Method = "POST";
+        tokenRequest.ContentType = "application/x-www-form-urlencoded";
+        tokenRequest.Accept = "Accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+        byte[] tokenRequestBodyBytes = Encoding.ASCII.GetBytes(tokenRequestBody);
+        tokenRequest.ContentLength = tokenRequestBodyBytes.Length;
+        using (Stream requestStream = tokenRequest.GetRequestStream())
+        {
+            await requestStream.WriteAsync(tokenRequestBodyBytes, 0, tokenRequestBodyBytes.Length).ConfigureAwait(false);
+        }
+
+        try
+        {
+            // gets the response
+            WebResponse tokenResponse = await tokenRequest.GetResponseAsync().ConfigureAwait(false);
+            using (StreamReader reader = new StreamReader(tokenResponse.GetResponseStream()))
+            {
+                // reads response body
+                string responseText = await reader.ReadToEndAsync().ConfigureAwait(false);
+                Console.WriteLine(responseText);
+
+                // converts to dictionary
+                Dictionary<string, string> tokenEndpointDecoded =
+ JsonConvert.DeserializeObject<Dictionary<string, string>>(responseText);
+
+                string accessToken = tokenEndpointDecoded["access_token"];
+                await RequestUserInfoAsync(accessToken).ConfigureAwait(false);
+            }
+        }
+        catch (WebException ex)
+        {
+            if (ex.Status == WebExceptionStatus.ProtocolError)
+            {
+                var response = ex.Response as HttpWebResponse;
+                if (response != null)
+                {
+                    Log.Error("HTTP: " + response.StatusCode);
+                    using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                    {
+                        // reads response body
+                        string responseText = await reader.ReadToEndAsync().ConfigureAwait(false);
+                        Log.Error(responseText);
+                    }
+                }
+
+            }
+        }
+#endif
+    }
+
+    private static async Task<string> RequestUserInfoAsync(string accessToken)
+    {
+        Log.Information("Making API Call to Userinfo...");
+
+        // builds the  request
+        string userinfoRequestUri = "https://www.googleapis.com/oauth2/v3/userinfo";
+        httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {accessToken}");
+        // gets the response
+        HttpResponseMessage userinfoResponse = await httpClient.GetAsync(userinfoRequestUri).ConfigureAwait(false);
+        // reads response body
+        string userinfoResponseText = await userinfoResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+        Log.Information(userinfoResponseText);
+        return userinfoResponseText;
+    }
+
+    /// <summary>
+    /// Returns URI-safe data with a given input length.
+    /// </summary>
+    /// <param name="length">Input length (nb. output will be longer)</param>
+    /// <returns></returns>
+    private static string GenerateRandomDataBase64url(uint length)
+    {
+        byte[] bytes = new byte[length];
+        RandomNumberGenerator.Fill(bytes);
+        return Base64UrlEncodeNoPadding(bytes);
+    }
+
+    /// <summary>
+    /// Returns the SHA256 hash of the input string, which is assumed to be ASCII.
+    /// </summary>
+    private static byte[] Sha256Ascii(string text)
+    {
+        byte[] bytes = Encoding.ASCII.GetBytes(text);
+        return SHA256.HashData(bytes);
+    }
+#endif
+    /// <summary>
+    /// Base64url no-padding encodes the given input buffer.
+    /// </summary>
+    /// <param name="buffer"></param>
+    /// <returns></returns>
+    public static string Base64UrlEncodeNoPadding(byte[] buffer)
+    {
+	    return Base64UrlEncoder.Encode(buffer).Replace("=","");
+    }
+#if manualYoutubeAPIAuth
+
+#if false
+    // Hack to bring the Console window to front.
+    // ref: http://stackoverflow.com/a/12066376
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    public static extern IntPtr GetConsoleWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    public void BringConsoleToFront()
+    {
+        SetForegroundWindow(GetConsoleWindow());
+    }
+#endif
+#endif
+
+
+
+
+
+
+
     public static string IdToVideo(string id, bool useYoutubeMusic = false)
     {
         return !useYoutubeMusic ? 
@@ -68,22 +417,31 @@ internal class YoutubeAPIs
             $"https://music.youtube.com/playlist?list={id}";
     }
 
+
     //https://developers.google.com/youtube/v3/code_samples/dotnet
 	public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
-            string playlistDescription = "")
+		string playlistDescription = "", bool makeNewPlaylistOnError = true, bool checkForDupes = false)
 	{
 		if (!initialized)
-			await this.Initialize().ConfigureAwait(false);
-		MakeNewPlaylist:
-        // Create a new, private playlist in the authorized user's channel.
-        Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
+			await InitializeAutomatic().ConfigureAwait(false);
+
+		YouTubeService youTubeService = new(new BaseClientService.Initializer()
+		{
+			HttpClientInitializer = credential,
+			ApplicationName = ApplicationName
+		});
+    MakeNewPlaylist:
         if (string.IsNullOrWhiteSpace(playlistId))
 		{
+			if (!makeNewPlaylistOnError)
+			{
+				throw new ArgumentNullException(nameof(playlistId));
+			}
 			playlistId = await NewPlaylist(playlistName, playlistDescription).ConfigureAwait(false);
 		}
-		else
+		else if(checkForDupes)
 		{
-			await foreach (var existingVideoId in GetVideoIdsInPlaylist(playlistId).ConfigureAwait(false))
+			await foreach (string existingVideoId in GetVideoIdsInPlaylist(playlistId).ConfigureAwait(false))
 			{
 				if (existingVideoId == videoID)
                 {
@@ -93,7 +451,7 @@ internal class YoutubeAPIs
 		}
 
 		// Add a video to the playlist.
-		var videoToAdd = new PlaylistItem()
+		PlaylistItem? videoToAdd = new()
 		{
 			Snippet = new PlaylistItemSnippet
 			{
@@ -110,7 +468,7 @@ internal class YoutubeAPIs
 		{
 			videoToAdd = await youTubeService.PlaylistItems.Insert(videoToAdd, "snippet").ExecuteAsync().ConfigureAwait(false);
 		}
-		catch (Google.GoogleApiException e)
+		catch (GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[playlistNotFound]"))
 			{
@@ -126,21 +484,24 @@ internal class YoutubeAPIs
      private async IAsyncEnumerable<PlaylistItem> GetPlaylistItemsInPlaylist(string playlistId)
      {
 	     if (!initialized)
-             await this.Initialize().ConfigureAwait(false);
-         var pagingToken = "";
+             await InitializeAutomatic().ConfigureAwait(false);
+	     YouTubeService youTubeService = new(new BaseClientService.Initializer()
+	     {
+		     HttpClientInitializer = credential,
+		     ApplicationName = ApplicationName
+	     });
+	     string? pagingToken = "";
          while (pagingToken is not null)
          {
-             Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-             var playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
+             PlaylistItemsResource.ListRequest? playlistItemsRequest = youTubeService.PlaylistItems.List("snippet");
              playlistItemsRequest.PlaylistId = playlistId;
              playlistItemsRequest.MaxResults = 100;
              playlistItemsRequest.PageToken = pagingToken;
-             var playlistItems = await playlistItemsRequest.ExecuteAsync().ConfigureAwait(false);
-             foreach (var playlistItem in playlistItems.Items)
+             PlaylistItemListResponse? playlistItems = await playlistItemsRequest.ExecuteAsync().ConfigureAwait(false);
+             foreach (PlaylistItem? playlistItem in playlistItems.Items)
              {
                  yield return playlistItem;
              }
-
              pagingToken = playlistItems.NextPageToken;
          }
      }
@@ -149,17 +510,22 @@ internal class YoutubeAPIs
     public async IAsyncEnumerable<Playlist> GetMyPlaylists()
     {
         if (!initialized)
-            await this.Initialize().ConfigureAwait(false);
-        var pagingToken = "";
+            await InitializeAutomatic().ConfigureAwait(false);
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer()
+        {
+	        HttpClientInitializer = credential,
+	        ApplicationName = ApplicationName
+        });
+        string? pagingToken = "";
         while (pagingToken is not null)
         {
             Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
-            var playlistsRequest = youTubeService.Playlists.List("snippet");
+            PlaylistsResource.ListRequest? playlistsRequest = youTubeService.Playlists.List("snippet");
             playlistsRequest.Mine = true;
             playlistsRequest.MaxResults = 100;
             playlistsRequest.PageToken = pagingToken;
-            var playlistItems = await playlistsRequest.ExecuteAsync().ConfigureAwait(false);
-            foreach (var playlistItem in playlistItems.Items)
+            PlaylistListResponse? playlistItems = await playlistsRequest.ExecuteAsync().ConfigureAwait(false);
+            foreach (Playlist? playlistItem in playlistItems.Items)
             {
                 yield return playlistItem;
             }
@@ -172,18 +538,44 @@ internal class YoutubeAPIs
 
     public async Task<PlaylistItem> GetRandomVideoInPlaylist(string playlistId)
 	{
-		var allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
+		List<PlaylistItem> allVideos = await GetPlaylistItemsInPlaylist(playlistId).ToListAsync().ConfigureAwait(false);
 		return allVideos[RandomNumberGenerator.GetInt32(allVideos.Count)]; //Upper Limit is exclusive
 	}
 
-	public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
+
+    internal async Task<string> MakeWeeklyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Weekly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+		    $"Weekly {playlistDescription}").ConfigureAwait(false);
+    }
+
+    internal async Task<string> MakeMonthlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Monthly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+		    $"Monthly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
+    }
+
+    internal async Task<string> MakeYearlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
+    {
+	    return await NewPlaylist($"Yearly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+		    $"Yearly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
+    }
+
+    public const string defaultPlaylistName = "Recommendation Playlist";
+    public const string defaultPlaylistDescription = "Auto-Generated Discord Recommendation Playlist";
+    public async Task<string> NewPlaylist(string? playlistName = null, string? playlistDescription = null)
 	{
-		recommendationPlaylist = new Playlist
+		YouTubeService? youTubeService = new(new BaseClientService.Initializer
+		{
+			HttpClientInitializer = credential,
+			ApplicationName = ApplicationName
+		});
+        recommendationPlaylist = new Playlist
 		{
 			Snippet = new PlaylistSnippet
 			{
-				Title = !string.IsNullOrEmpty(playlistName) ? playlistName : "Recommendation Playlist",
-				Description = !string.IsNullOrEmpty(playlistDescription) ? playlistDescription : "Auto-Generated Discord Recommendation Playlist"
+				Title = !string.IsNullOrEmpty(playlistName) ? playlistName : defaultPlaylistName,
+				Description = !string.IsNullOrEmpty(playlistDescription) ? playlistDescription : defaultPlaylistDescription
 			},
 			Status = new PlaylistStatus
 			{
@@ -192,11 +584,10 @@ internal class YoutubeAPIs
 		};
 		try
         {
-            Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
             recommendationPlaylist =
 				await youTubeService.Playlists.Insert(recommendationPlaylist, "snippet,status").ExecuteAsync().ConfigureAwait(false);
         }
-		catch (Google.GoogleApiException e)
+		catch (GoogleApiException e)
 		{
 			if (e.Message.Contains("Reason[youtubeSignupRequired]"))
 			{
@@ -213,9 +604,14 @@ internal class YoutubeAPIs
     {
         if (string.IsNullOrWhiteSpace(playlistId))
         {
-            throw new ArgumentNullException("playlistId");
+            throw new ArgumentNullException(nameof(playlistId));
         }
-        var deleteRequest = await youTubeService!.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer()
+        {
+	        HttpClientInitializer = credential,
+	        ApplicationName = ApplicationName
+        });
+        string? deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
         {
 			Log.Verbose($"Delete Request returned ${deleteRequest}");
@@ -224,6 +620,23 @@ internal class YoutubeAPIs
         return true;
     }
 
+    public async Task RemovePlaylistItem(string playlistItemId)
+    {
+        if (string.IsNullOrWhiteSpace(playlistItemId))
+	    {
+		    throw new ArgumentNullException(nameof(playlistItemId));
+	    }
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer()
+        {
+	        HttpClientInitializer = credential,
+	        ApplicationName = ApplicationName
+        });
+        string? deleteResponse = await youTubeService.PlaylistItems.Delete(playlistItemId).ExecuteAsync().ConfigureAwait(false);
+	    if (!string.IsNullOrWhiteSpace(deleteResponse))
+	    {
+		    Log.Verbose($"Delete Request returned {deleteResponse}");
+	    }
+    }
     public async Task<int> RemoveFromPlaylist(string playlistId, string videoId)
     {
         if (string.IsNullOrWhiteSpace(playlistId))
@@ -235,14 +648,19 @@ internal class YoutubeAPIs
             throw new ArgumentException("videoId is null or whitespace");
         }
 
-        var vidsRemoved = 0;
-        await foreach (var playlist in GetMyPlaylists().ConfigureAwait(false))
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer
+        {
+	        HttpClientInitializer = credential,
+	        ApplicationName = ApplicationName
+        });
+        int vidsRemoved = 0;
+        await foreach (Playlist playlist in GetMyPlaylists().ConfigureAwait(false))
         {
             if (playlist.Id != playlistId) continue;
-            var videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
-            await foreach (var videoToRemove in videosToRemove.ConfigureAwait(false))
+            IAsyncEnumerable<PlaylistItem> videosToRemove = GetPlaylistItemsInPlaylist(playlistId).Where(video => video.Snippet.ResourceId.VideoId == videoId);
+            await foreach (PlaylistItem videoToRemove in videosToRemove.ConfigureAwait(false))
             {
-                var deleteVideooResponse = await youTubeService!.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
+                string? deleteVideooResponse = await youTubeService.PlaylistItems.Delete(videoToRemove.Id).ExecuteAsync().ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(deleteVideooResponse))
                 {
                    Log.Verbose($"Delete Request returned {deleteVideooResponse}");
