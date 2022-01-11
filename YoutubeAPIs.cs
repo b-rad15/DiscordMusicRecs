@@ -77,6 +77,7 @@ internal class YoutubeAPIs
     private YoutubeAPIs()
     {
         ApplicationName = $"{GetType()}--{Dns.GetHostName()}--{Program.Config.PostgresConfig.DbName}";
+        Log.Information($"Accessing youtube api as {ApplicationName}");
     }
 
     public static YoutubeAPIs Instance { get; } = new();
