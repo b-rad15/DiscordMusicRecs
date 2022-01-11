@@ -55,6 +55,12 @@ internal class Program
             TokenType = TokenType.Bot,
             Intents = DiscordIntents.AllUnprivileged
         });
+        //Set up that requires DiscordClient Instantiated
+        await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
+        Log.Information("Removed old time based entries");
+        await Database.PopulateTimeBasedPlaylists().ConfigureAwait(false);
+        Log.Information("Populated new time based playlist entries");
+
         BotOwnerDiscordUser = await Discord.GetUserAsync(BotOwnerId).ConfigureAwait(false);
         Discord.MessageCreated += OnDiscordOnMessageCreated;
         Discord.MessageReactionAdded += DiscordOnMessageReactionAdded;
@@ -371,10 +377,6 @@ internal class Program
         // }
         await YoutubeAPIs.Instance.InitializeAutomatic().ConfigureAwait(false);
         Log.Information("Initialized Youtube Credentials");
-        await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
-        Log.Information("Removed old time based entries");
-        await Database.PopulateTimeBasedPlaylists().ConfigureAwait(false);
-        Log.Information("Populated new time based playlist entries");
         Timer dailyTimer = new()
         {
 	        AutoReset = true,
