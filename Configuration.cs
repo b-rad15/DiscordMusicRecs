@@ -40,7 +40,7 @@ namespace DiscordMusicRecs
 		public static Configuration ReadConfig(string configPath = "config.json")
 		{
 			string jsonString = File.ReadAllText(configPath);
-            var options = new JsonSerializerOptions
+            JsonSerializerOptions? options = new JsonSerializerOptions
             {
                 AllowTrailingCommas = true,
 				PropertyNameCaseInsensitive = true,

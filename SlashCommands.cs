@@ -1245,7 +1245,7 @@ public class SlashCommands : ApplicationCommandModule
             }
 
             //Remove From Database
-            var rowsDeleted = await Database.Instance.DeleteVideoSubmitted(playlistId, messageId:entry.MessageId).ConfigureAwait(false);
+            int rowsDeleted = await Database.Instance.DeleteVideoSubmitted(playlistId, messageId:entry.MessageId).ConfigureAwait(false);
             //Delete Associated Message
 		    if (removeMessage)
 		    {
