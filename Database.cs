@@ -766,7 +766,10 @@ internal class Database
         {
             if (string.IsNullOrEmpty(playlistData.WeeklyPlaylistID))
             {
-                playlistData.WeeklyPlaylistID = await YoutubeAPIs.Instance.MakeWeeklyPlaylist().ConfigureAwait(false);
+                DiscordGuild server = await Program.Discord.GetGuildAsync(playlistData.ServerId).ConfigureAwait(false);
+                var playlistTitle = $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}";
+                var playlistDescription = $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server";
+                playlistData.WeeklyPlaylistID = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.WeeklyTimeCreated = DateTime.Now.ToUniversalTime();
             }
             foreach (VideoData videoData in playlistData.Videos)
@@ -812,7 +815,10 @@ internal class Database
         {
             if (string.IsNullOrEmpty(playlistData.MonthlyPlaylistID))
             {
-                playlistData.MonthlyPlaylistID = await YoutubeAPIs.Instance.MakeMonthlyPlaylist().ConfigureAwait(false);
+                DiscordGuild server = await Program.Discord.GetGuildAsync(playlistData.ServerId).ConfigureAwait(false);
+                var playlistTitle = $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}";
+                var playlistDescription = $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server";
+                playlistData.MonthlyPlaylistID = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.MonthlyTimeCreated = DateTime.Now.ToUniversalTime();
             }
             foreach (VideoData videoData in playlistData.Videos)
@@ -858,7 +864,10 @@ internal class Database
         {
             if (string.IsNullOrEmpty(playlistData.YearlyPlaylistID))
             {
-                playlistData.YearlyPlaylistID = await YoutubeAPIs.Instance.MakeYearlyPlaylist().ConfigureAwait(false);
+                DiscordGuild server = await Program.Discord.GetGuildAsync(playlistData.ServerId).ConfigureAwait(false);
+                var playlistTitle = $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}";
+                var playlistDescription = $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server";
+                playlistData.YearlyPlaylistID = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.YearlyTimeCreated = DateTime.Now.ToUniversalTime();
             }
             foreach (VideoData videoData in playlistData.Videos)

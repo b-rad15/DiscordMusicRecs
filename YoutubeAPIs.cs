@@ -545,19 +545,19 @@ internal class YoutubeAPIs
 
     internal async Task<string> MakeWeeklyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Weekly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+	    return await NewPlaylist($"{(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)} - Weekly",
 		    $"Weekly {playlistDescription}").ConfigureAwait(false);
     }
 
     internal async Task<string> MakeMonthlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Monthly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+	    return await NewPlaylist($"{(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)} - Monthly",
 		    $"Monthly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
     }
 
     internal async Task<string> MakeYearlyPlaylist(string? playlistTitle = null, string? playlistDescription = null)
     {
-	    return await NewPlaylist($"Yearly - {(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)}",
+	    return await NewPlaylist($"{(string.IsNullOrEmpty(playlistTitle) ? defaultPlaylistName : playlistTitle)} - Yearly",
 		    $"Yearly {(string.IsNullOrEmpty(playlistDescription) ? defaultPlaylistDescription : playlistDescription)}").ConfigureAwait(false);
     }
 
