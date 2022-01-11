@@ -379,7 +379,7 @@ internal class Program
         {
 	        AutoReset = true,
 	        Enabled = true,
-	        Interval = TimeSpan.FromDays(1).TotalMilliseconds
+	        Interval = TimeSpan.FromHours(1).TotalMilliseconds
         };
         dailyTimer.Start();
         dailyTimer.Elapsed += async (_, _) => await HelperFunctions.RemoveOldItemsFromTimeBasedPlaylists().ConfigureAwait(false);
