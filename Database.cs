@@ -484,59 +484,39 @@ internal class Database
         return !(await database.BannedUsers.AnyAsync(bu =>
             bu.UserId == userId && bu.ServerId == serverId && (bu.PlaylistId == playlistId || bu.BannedFromServer)).ConfigureAwait(false));
     }
-
-    //TODO: Add variable selector
-    public async Task<bool> CheckPlaylistChannelExists(string tableName, int? id = null, ulong? serverId = null, ulong? channelId = null, string? playlistId = null)
+    
+    public async Task<bool> CheckPlaylistChannelExists(ulong? serverId = null, ulong? channelId = null,
+        string? playlistId = null)
     {
+        if (serverId is null && channelId is null && playlistId is null)
+        {
+            throw new ArgumentException("One of serverId, channelId, or playlistId must not be null");
+        }
         await using DiscordDatabaseContext database = new();
-        PlaylistData? videoItem = await database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId).FirstOrDefaultAsync().ConfigureAwait(false);
-        return videoItem != default(PlaylistData);
-
-        if (id is null && serverId is null && channelId is null && playlistId is null)
-        {
-            throw new Exception("At least one of id, serverId, channelId, or playlistId");
-        }
-
-        await using NpgsqlCommand command = new()
-        {
-            Connection = Connection,
-        };
-        string whereString = "";
-        if (id is not null)
-        {
-            whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} id = @id";
-            command.Parameters.AddWithValue("id", NpgsqlDbType.Integer, id);
-        }
-
-        if (channelId is not null)
-        {
-            whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} channel_id = @channelId";
-            command.Parameters.AddWithValue("channelId", NpgsqlDbType.Numeric, (BigInteger)channelId);
-        }
-
+        IQueryable<PlaylistData>? whereQuery = null;
         if (serverId is not null)
         {
-            whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} server_id = @serverId";
-            command.Parameters.AddWithValue("serverId", NpgsqlDbType.Numeric, (BigInteger)serverId);
+            whereQuery = whereQuery is null
+                ? database.PlaylistsAdded.Where(vs => vs.ServerId == serverId)
+                : whereQuery.Where(vs => vs.ServerId == serverId);
         }
 
         if (playlistId is not null)
         {
-            whereString += $"{(string.IsNullOrEmpty(whereString) ? "WHERE" : " AND")} playlist_id = @playlistId";
-            command.Parameters.AddWithValue("playlistId", NpgsqlDbType.Numeric, playlistId);
+            whereQuery = whereQuery is null
+                ? database.PlaylistsAdded.Where(vs => vs.PlaylistId == playlistId)
+                : whereQuery.Where(vs => vs.PlaylistId == playlistId);
         }
 
-        command.CommandText = $"SELECT channel_id FROM {tableName} {whereString};";
-        Debug.WriteLine(command.CommandText);
-        try
+        // ReSharper disable once InvertIf
+        if (channelId is not null)
         {
-            object data = await command.ExecuteScalarAsync().ConfigureAwait(false);
-            return data is not null;
+            whereQuery = whereQuery is null
+                ? database.PlaylistsAdded.Where(vs => vs.ChannelId == channelId)
+                : whereQuery.Where(vs => vs.ChannelId == channelId);
         }
-        catch (DbException)
-        {
-            return false;
-        }
+
+        return await whereQuery!.AnyAsync().ConfigureAwait(false);
 
     }
 
@@ -686,37 +666,6 @@ internal class Database
     {
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistID).DeleteAsync().ConfigureAwait(false);
-    }
-    //TODO: Add selectors for other columns
-    //TODO: Replace returning null item with returning none and checking with .Any()
-    public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
-    {
-        await using DiscordDatabaseContext database = new();
-        IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
-        // if (messageId is null && userId is null && videoId is null)
-        // {
-        // 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
-        // }
-        if (messageId is not null)
-        {
-            whereQuery = whereQuery.Where(pa => pa.MessageId == messageId);
-        }
-        if (userId is not null)
-        {
-            whereQuery = whereQuery.Where(pa => pa.UserId == userId);
-        }
-        if (videoId is not null)
-        {
-            whereQuery = whereQuery.Where(pa => pa.VideoId == videoId);
-        }
-        
-        return await GetPlaylistItemsUnsafe(whereQuery).ConfigureAwait(false);
-    }
-
-    internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(IQueryable<VideoData>? whereQuery = null)
-    {
-        await using DiscordDatabaseContext database = new();
-        return await (whereQuery ?? database.VideosSubmitted).ToListAsync().ConfigureAwait(false);
     }
 
     internal async Task<List<VideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<VideoData, bool>> whereFunc)
@@ -886,7 +835,7 @@ internal class Database
     #endregion
     #region TimeBasedFuncs
     //Weekly Add
-    private static Func<VideoData, bool> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
+    private static Expression<Func<VideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
         DateTime dt = passedDateTime ?? DateTime.Now;
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
@@ -1008,42 +957,74 @@ internal class Database
     }
 
 #endregion
-    public async Task<VideoData?> GetPlaylistItem(string playlistId, int? id = null, ulong? messageId = null, ulong? userId = null, string? videoId = null)
+
+    public async Task<VideoData?> GetPlaylistItem(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
     {
-        await using DiscordDatabaseContext database = new();
-        IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
+        //When grabbing only one item, must be more specific than just the playlist it's in
         if (messageId is null && userId is null && videoId is null)
         {
-            throw new Exception("At least one of messageId, userId, or videoId must not be null");
+        	throw new Exception("At least one of messageId, userId, or videoId must not be null");
         }
+        await using DiscordDatabaseContext database = new();
+        IQueryable<VideoData>? whereQuery = null;
         if (messageId is not null)
         {
-            whereQuery = whereQuery.Where(pa => pa.MessageId == messageId);
+            whereQuery = whereQuery is null ? database.VideosSubmitted.Where(vs=>vs.MessageId == messageId) : whereQuery.Where(vs => vs.MessageId == messageId);
         }
         if (userId is not null)
         {
-            whereQuery = whereQuery.Where(pa => pa.UserId == userId);
+            whereQuery = whereQuery is null ? database.VideosSubmitted.Where(vs => vs.UserId == userId) : whereQuery.Where(vs => vs.UserId == userId);
         }
         if (videoId is not null)
         {
-            whereQuery = whereQuery.Where(pa => pa.VideoId == videoId);
+            whereQuery = whereQuery is null ? database.VideosSubmitted.Where(vs => vs.VideoId == videoId) : whereQuery.Where(vs => vs.VideoId == videoId);
         }
 
-        try
-        {
+        VideoData? video = whereQuery is null
+            ? await database.VideosSubmitted.AsNoTracking().FirstOrDefaultAsync().ConfigureAwait(false)
+            : await whereQuery.AsNoTracking().FirstOrDefaultAsync().ConfigureAwait(false);
+        return video;
+    }
 
-            VideoData? rowData = await whereQuery.FirstOrDefaultAsync().ConfigureAwait(false);
-            return rowData;
-        }
-        catch (InvalidOperationException)
+    public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
+    {
+        // if (messageId is null && userId is null && videoId is null)
+        // {
+        // 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
+        // }
+        Expression<Func<VideoData, bool>>? whereExpression = vs => vs.PlaylistId == playlistId;
+        IQueryable<VideoData>? whereQuery = null;
+        await using DiscordDatabaseContext database = new();
+        if (messageId is not null)
         {
-            return null;
+            whereQuery = whereQuery is null
+                ? database.VideosSubmitted.Where(vs => vs.MessageId == messageId)
+                : whereQuery.Where(vs => vs.MessageId == messageId);
         }
-        catch (Exception)
+        if (userId is not null)
         {
-            Debugger.Break();
-            return null;
+            whereQuery = whereQuery is null
+                ? database.VideosSubmitted.Where(vs => vs.UserId == userId)
+                : whereQuery.Where(vs => vs.UserId == userId);
         }
+        if (videoId is not null)
+        {
+            whereQuery = whereQuery is null
+                ? database.VideosSubmitted.Where(vs => vs.VideoId == videoId)
+                : whereQuery.Where(vs => vs.VideoId == videoId);
+        }
+
+        var vid = whereQuery is null
+            ? await database.VideosSubmitted.ToListAsync().ConfigureAwait(false)
+            : await whereQuery.ToListAsync().ConfigureAwait(false);
+        return vid;
+    }
+
+    internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(DiscordDatabaseContext database, IQueryable<VideoData>? whereQuery = null)
+    {
+        return whereQuery is null
+            ? await database.VideosSubmitted.ToListAsync().ConfigureAwait(false)
+            : await whereQuery.ToListAsync().ConfigureAwait(false);
     }
 
     //Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel

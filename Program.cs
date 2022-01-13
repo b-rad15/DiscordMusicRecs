@@ -171,7 +171,7 @@ internal class Program
 	    {
 		    return;
 	    }
-	    Database.VideoData? playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, messageId:message.Id).ConfigureAwait(false);
+	    Database.VideoData? playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, messageId: message.Id).ConfigureAwait(false);
 	    if (playlistEntryData is null)
 	    {
 		    return;
@@ -193,18 +193,15 @@ internal class Program
             _ = Task.Run(async () =>
             {
                 bool shouldDeleteMessage = false;
-                ulong? recsChannelId = null;
-                Database.PlaylistData? rowData = null;
+                Database.PlaylistData? rowData;
                 try
                 {
                     rowData = await Database.Instance.GetPlaylistRowData(channelId: e.Channel.Id).ConfigureAwait(false);
-                    recsChannelId = rowData?.ChannelId; //null if rowData is null otherwise channelId
                 }
                 catch (Exception exception)
                 {
                     Debugger.Break();
                     Log.Error(exception.ToString());
-                    recsChannelId = null;
                     return;
                 }
                 if (rowData is not null)

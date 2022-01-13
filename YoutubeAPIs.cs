@@ -429,7 +429,8 @@ internal class YoutubeAPIs
 		YouTubeService youTubeService = new(new BaseClientService.Initializer()
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = ApplicationName
+			ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
 		});
     MakeNewPlaylist:
         if (string.IsNullOrWhiteSpace(playlistId))
@@ -489,7 +490,8 @@ internal class YoutubeAPIs
 	     YouTubeService youTubeService = new(new BaseClientService.Initializer()
 	     {
 		     HttpClientInitializer = credential,
-		     ApplicationName = ApplicationName
+		     ApplicationName = ApplicationName,
+             DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
 	     });
 	     string? pagingToken = "";
          while (pagingToken is not null)
@@ -515,7 +517,8 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = ApplicationName
+	        ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
         });
         string? pagingToken = "";
         while (pagingToken is not null)
@@ -569,7 +572,8 @@ internal class YoutubeAPIs
 		YouTubeService? youTubeService = new(new BaseClientService.Initializer
 		{
 			HttpClientInitializer = credential,
-			ApplicationName = ApplicationName
+			ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
 		});
         recommendationPlaylist = new Playlist
 		{
@@ -610,7 +614,8 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer()
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = ApplicationName
+	        ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
         });
         string? deleteRequest = await youTubeService.Playlists.Delete(playlistId).ExecuteAsync().ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(deleteRequest))
@@ -652,7 +657,8 @@ internal class YoutubeAPIs
         YouTubeService? youTubeService = new(new BaseClientService.Initializer
         {
 	        HttpClientInitializer = credential,
-	        ApplicationName = ApplicationName
+	        ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
         });
         int vidsRemoved = 0;
         await foreach (Playlist playlist in GetMyPlaylists().ConfigureAwait(false))

@@ -359,7 +359,7 @@ public class SlashCommands : ApplicationCommandModule
                 .ConfigureAwait(false);
             DiscordWebhookBuilder msg = new();
             //Check if Valid
-            if (await Database.Instance.CheckPlaylistChannelExists(Database.MainTableName, channelId: bindChannel.Id)
+            if (await Database.Instance.CheckPlaylistChannelExists(channelId: bindChannel.Id)
                     .ConfigureAwait(false))
             {
                 msg.WithContent(
@@ -479,12 +479,6 @@ public class SlashCommands : ApplicationCommandModule
                     .ConfigureAwait(false);
                 yearlyPlaylistId = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription)
                     .ConfigureAwait(false);
-                /*
-	            monthlyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Monthly - {playlistTitle}",
-		            $"Monthly {playlistDescription}").ConfigureAwait(false);
-	            yearlyPlaylistId = await YoutubeAPIs.Instance.NewPlaylist($"Yearly - {playlistTitle}",
-		            $"Yearly {playlistDescription}").ConfigureAwait(false);
-                */
             }
             catch (Exception e)
             {
