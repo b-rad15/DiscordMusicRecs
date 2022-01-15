@@ -1028,7 +1028,7 @@ internal class Database
     }
 
     //Security Measure for user comamnd, without verifying server via context you could theoretically delete any playlist as long as you can mention the channel
-    public async Task<bool> DeleteRowWithServer(string tableName, ulong serverId, ulong channelId)
+    public async Task<bool> DeleteRowWithServer(ulong serverId, ulong channelId)
     {
         await using DiscordDatabaseContext database = new();
         int nRows = await database.PlaylistsAdded.Where(pa => pa.ServerId == serverId && pa.ChannelId == channelId).DeleteAsync().ConfigureAwait(false);

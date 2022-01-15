@@ -609,7 +609,7 @@ public class SlashCommands : ApplicationCommandModule
             try
             {
                 //TODO: Delete channel link but do not delete playlist
-                if (await Database.Instance.DeleteRowWithServer(Database.MainTableName, ctx.Guild.Id, watchChannel.Id)
+                if (await Database.Instance.DeleteRowWithServer(ctx.Guild.Id, watchChannel.Id)
                         .ConfigureAwait(false))
                 {
                     msgResponse += $"Successfully removed watch on {watchChannel.Mention}\n";
@@ -617,7 +617,7 @@ public class SlashCommands : ApplicationCommandModule
 
                 if (shouldDeletePlaylist)
                 {
-                    if (rowData.PlaylistId is null)
+                    if (rowData?.PlaylistId is null)
                     {
                         msgResponse += "No playlist to delete\n";
                     }
@@ -626,17 +626,17 @@ public class SlashCommands : ApplicationCommandModule
                         bool didDeletePlaylist = await YoutubeAPIs.Instance.DeletePlaylist(rowData.PlaylistId)
                             .ConfigureAwait(false);
                         //Does not matter if time based deletes are successful tbh
-                        if (string.IsNullOrWhiteSpace(rowData.WeeklyPlaylistID))
+                        if (!string.IsNullOrWhiteSpace(rowData.WeeklyPlaylistID))
                         {
                             await YoutubeAPIs.Instance.DeletePlaylist(rowData.WeeklyPlaylistID).ConfigureAwait(false);
                         }
 
-                        if (string.IsNullOrWhiteSpace(rowData.MonthlyPlaylistID))
+                        if (!string.IsNullOrWhiteSpace(rowData.MonthlyPlaylistID))
                         {
                             await YoutubeAPIs.Instance.DeletePlaylist(rowData.MonthlyPlaylistID).ConfigureAwait(false);
                         }
 
-                        if (string.IsNullOrWhiteSpace(rowData.YearlyPlaylistID))
+                        if (!string.IsNullOrWhiteSpace(rowData.YearlyPlaylistID))
                         {
                             await YoutubeAPIs.Instance.DeletePlaylist(rowData.YearlyPlaylistID).ConfigureAwait(false);
                         }
@@ -649,7 +649,11 @@ public class SlashCommands : ApplicationCommandModule
                 else
                 {
                     msgResponse +=
-                        $"Playlist will continue to exist at {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}. Keep this link, you will never be able to retrieve it again later\n";
+                        $"Playlist will continue to exist at {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n" +
+                        $"Weekly: {YoutubeAPIs.IdToPlaylist(rowData.WeeklyPlaylistID)}\n" +
+                        $"Monthly: {YoutubeAPIs.IdToPlaylist(rowData.MonthlyPlaylistID)}\n" +
+                        $"Yearly: {YoutubeAPIs.IdToPlaylist(rowData.YearlyPlaylistID)}\n" +
+                        $"Keep these links, you will never be able to retrieve them again later\n";
                 }
 
                 if (rowData?.PlaylistId is not null)

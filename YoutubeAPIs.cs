@@ -604,6 +604,33 @@ internal class YoutubeAPIs
 
 		return recommendationPlaylist.Id;
 	}
+    
+    public async Task<bool> ChangeTitle(string playlistId, string title)
+    {
+        if (string.IsNullOrWhiteSpace(playlistId))
+        {
+            throw new ArgumentNullException(nameof(playlistId));
+        }
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            throw new ArgumentNullException(nameof(title));
+        }
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer()
+        {
+            HttpClientInitializer = credential,
+            ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
+        });
+        Playlist playlist = new Playlist
+            {
+                Snippet = new PlaylistSnippet
+                {
+                    Title = title
+                },
+            };
+        youTubeService.Playlists.Update(playlist, "snippet.title");
+        return true;
+    }
 
     public async Task<bool> DeletePlaylist(string playlistId)
     {
