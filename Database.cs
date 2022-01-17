@@ -15,11 +15,13 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml;
 using DSharpPlus.Entities;
 using Google.Apis.YouTube.v3.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using Npgsql;
 using NpgsqlTypes;
 using Serilog;
@@ -40,13 +42,14 @@ internal class Database
     private static readonly string DBname = Program.Config.PostgresConfig.DbName; //Name of the database used
     public static readonly string MainTableName = Program.Config.PostgresConfig.MainTableName; //Name of main table, for server channel watches
     public static readonly string LogTableName = Program.Config.PostgresConfig.LogTableName; //Name of main table, for server channel watches
+    public static readonly string YouTubeVideoDataTableName = Program.Config.PostgresConfig.YouTubeVideoDataTableName; //Name of main table, for server channel watches
 
     private readonly NpgsqlConnection Connection = null!;
 
     // Build connection string using parameters from portal
     private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
 
-    public class VideoData
+    public class SubmittedVideoData
     {
         [Required]
         public string VideoId { get; set; } = null!;
@@ -67,21 +70,214 @@ internal class Database
         public short Upvotes { get; set; }
         [Required]
         public short Downvotes { get; set; }
-        //Relation
+        //Relation to playlist
         public string PlaylistId { get; set; } = null!;
         public PlaylistData Playlist { get; set; } = null!;
+        //Relation to YouTube data
+        public YouTubeVideo Video { get; set; }
     }
 
-    public readonly struct VideoDataAndContext
+    public readonly struct SubmittedVideoDataAndContext
     {
-        public readonly VideoData VideoData;
+        public readonly SubmittedVideoData SubmittedVideoData;
         public readonly DiscordDatabaseContext Context;
 
-        public VideoDataAndContext(ref VideoData videoData, ref DiscordDatabaseContext context)
+        public SubmittedVideoDataAndContext(ref SubmittedVideoData submittedVideoData, ref DiscordDatabaseContext context)
         {
-            VideoData = videoData;
+            SubmittedVideoData = submittedVideoData;
             Context = context;
         }
+    }
+    public class YouTubeVideo
+    {
+        public string? ETag { get; }
+        public string Id { get; }
+
+        #region snippet
+        public DateTime? PublishedAt { get; }
+        public string? ChannelId { get; }
+        public string? Title { get; }
+        public string? Description { get; }
+        public string? Thumbnail { get; }
+        public string? ChannelTitle { get; }
+        public string[]? Tags { get; }
+        public string? CategoryId { get; }
+        public string? LiveBroadcastContent { get; }
+        public string? DefaultLanguage { get; }
+        public string? LocalizedTitle { get; }
+        public string? LocalizedDescription { get; }
+        public string? DefaultAudioLanguage { get; }
+        #endregion
+
+        #region contentDetails
+        public Duration? Duration { get; }
+        public string? Dimension { get; }
+        //Alternative to using Dimension since options are 2D or 3D
+        public bool Is3D { get; } = false;
+        //To Limit to official uploads only
+        public bool? LicensedContent { get; }
+        //must be used in conjunction with IsRestricted
+        public string[]? RestrictedRegions { get; }
+        //True if RestrictedRegions is a blocked list (blacklist), false if RestrictedRegions is an allowed list (whitelist) or if RestrictedRegions is null
+        public bool IsRestricted { get; } = false;
+        //TODO: Implement Content Rating Check
+        //360 or rectangular
+        public string? Projection { get; }
+        #endregion
+
+        #region status
+        //TODO: Implement rest of status
+        public string? UploadStatus { get; }
+        public string? PrivacyStatus { get; }
+        public bool? PublicStatsViewable { get; }
+        public bool? MadeForKids { get; }
+        #endregion
+
+        #region statistics
+        public ulong? ViewCount { get; }
+        public ulong? LikeCount { get; }
+        public ulong? DislikeCount { get; }
+        public ulong? FavoriteCount { get; }
+        public ulong? CommentCount { get; }
+        #endregion
+
+        #region topicDetails
+
+        public const string WikipediaUrl = "https://en.wikipedia.org";
+        public const string WikiBase = $"{WikipediaUrl}/wiki/";
+        //contains only extensions on top of WikiBase
+        public string[]? TopicCategories { get; }
+        #endregion
+
+        #region construction
+        public YouTubeVideo(string id, string? eTag = null, DateTime? publishedAt = default, string? channelId = null,
+            string? title = null, string? description = null, string? thumbnail = null, string? channelTitle = null,
+            string[]? tags = null, string? categoryId = null, string? liveBroadcastContent = null,
+            string? defaultLanguage = null, string? localizedTitle = null, string? localizedDescription = null,
+            string? defaultAudioLanguage = null, Duration? duration = default, string? dimension = null,
+            bool is3D = default, bool? licensedContent = default, string[]? restrictedRegions = null,
+            bool isRestricted = default, string? projection = null, string? uploadStatus = null,
+            string? privacyStatus = null, bool? publicStatsViewable = default, bool? madeForKids = default,
+            ulong? viewCount = default, ulong? likeCount = default, ulong? dislikeCount = default,
+            ulong? favoriteCount = default, ulong? commentCount = default, string[]? topicCategories = null)
+        {
+            ETag = eTag;
+            Id = id;
+            PublishedAt = publishedAt;
+            ChannelId = channelId;
+            Title = title;
+            Description = description;
+            Thumbnail = thumbnail;
+            ChannelTitle = channelTitle;
+            Tags = tags;
+            CategoryId = categoryId;
+            LiveBroadcastContent = liveBroadcastContent;
+            DefaultLanguage = defaultLanguage;
+            LocalizedTitle = localizedTitle;
+            LocalizedDescription = localizedDescription;
+            DefaultAudioLanguage = defaultAudioLanguage;
+            Duration = duration;
+            Dimension = dimension;
+            Is3D = is3D;
+            LicensedContent = licensedContent;
+            RestrictedRegions = restrictedRegions;
+            IsRestricted = isRestricted;
+            Projection = projection;
+            UploadStatus = uploadStatus;
+            PrivacyStatus = privacyStatus;
+            PublicStatsViewable = publicStatsViewable;
+            MadeForKids = madeForKids;
+            ViewCount = viewCount;
+            LikeCount = likeCount;
+            DislikeCount = dislikeCount;
+            FavoriteCount = favoriteCount;
+            CommentCount = commentCount;
+            TopicCategories = topicCategories;
+        }
+        public YouTubeVideo(string id, string? eTag = null, DateTime? publishedAt = default, string? channelId = null,
+            string? title = null, string? description = null, string? thumbnail = null, string? channelTitle = null,
+            string[]? tags = null, string? categoryId = null, string? liveBroadcastContent = null,
+            string? defaultLanguage = null, string? localizedTitle = null, string? localizedDescription = null,
+            string? defaultAudioLanguage = null, string? duration = null, string? dimension = null,
+            bool is3D = default, bool? licensedContent = default, string[]? restrictedRegions = null,
+            bool isRestricted = default, string? projection = null, string? uploadStatus = null,
+            string? privacyStatus = null, bool? publicStatsViewable = default, bool? madeForKids = default,
+            ulong? viewCount = default, ulong? likeCount = default, ulong? dislikeCount = default,
+            ulong? favoriteCount = default, ulong? commentCount = default, string[]? topicCategories = null)
+        {
+            ETag = eTag;
+            Id = id;
+            PublishedAt = publishedAt;
+            ChannelId = channelId;
+            Title = title;
+            Description = description;
+            Thumbnail = thumbnail;
+            ChannelTitle = channelTitle;
+            Tags = tags;
+            CategoryId = categoryId;
+            LiveBroadcastContent = liveBroadcastContent;
+            DefaultLanguage = defaultLanguage;
+            LocalizedTitle = localizedTitle;
+            LocalizedDescription = localizedDescription;
+            DefaultAudioLanguage = defaultAudioLanguage;
+            Duration = duration == null ? null : NodaTime.Duration.FromTimeSpan(XmlConvert.ToTimeSpan(duration));
+            Dimension = dimension;
+            Is3D = is3D;
+            LicensedContent = licensedContent;
+            RestrictedRegions = restrictedRegions;
+            IsRestricted = isRestricted;
+            Projection = projection;
+            UploadStatus = uploadStatus;
+            PrivacyStatus = privacyStatus;
+            PublicStatsViewable = publicStatsViewable;
+            MadeForKids = madeForKids;
+            ViewCount = viewCount;
+            LikeCount = likeCount;
+            DislikeCount = dislikeCount;
+            FavoriteCount = favoriteCount;
+            CommentCount = commentCount;
+            TopicCategories = topicCategories;
+        }
+
+        public YouTubeVideo(string videoId, Video video)
+        {
+
+            ETag = video.Snippet.ETag;
+            Id = videoId;
+            PublishedAt = video.Snippet.PublishedAt;
+            ChannelId = video.Snippet.ChannelId;
+            Title = video.Snippet.Title;
+            Description = video.Snippet.Description;
+            Thumbnail = video.Snippet.Thumbnails.Default__.Url;
+            ChannelTitle = video.Snippet.ChannelTitle;
+            Tags = video.Snippet.Tags.ToArray();
+            CategoryId = video.Snippet.CategoryId;
+            LiveBroadcastContent = video.Snippet.LiveBroadcastContent;
+            DefaultLanguage = video.Snippet.DefaultLanguage;
+            LocalizedTitle = video.Snippet.Localized.Title;
+            LocalizedDescription = video.Snippet.Localized.Description;
+            DefaultAudioLanguage = video.Snippet.DefaultAudioLanguage;
+            Duration = NodaTime.Duration.FromTimeSpan(XmlConvert.ToTimeSpan(video.ContentDetails.Duration));
+            Dimension = video.ContentDetails.Dimension;
+            Is3D = Dimension.ToLower() == "3d";
+            LicensedContent = video.ContentDetails.LicensedContent;
+            RestrictedRegions = video.ContentDetails.RegionRestriction.Allowed is { Count: > 0 } ? video.ContentDetails.RegionRestriction.Allowed.ToArray() : video.ContentDetails.RegionRestriction.Blocked.ToArray();
+            IsRestricted = video.ContentDetails.RegionRestriction.Blocked is { Count: > 0 };
+            Projection = video.ContentDetails.Projection;
+            UploadStatus = video.Status.UploadStatus;
+            PrivacyStatus = video.Status.PrivacyStatus;
+            PublicStatsViewable = video.Status.PublicStatsViewable;
+            MadeForKids = video.Status.MadeForKids;
+            ViewCount = video.Statistics.ViewCount;
+            LikeCount = video.Statistics.LikeCount;
+            DislikeCount = video.Statistics.DislikeCount;
+            FavoriteCount = video.Statistics.FavoriteCount;
+            CommentCount = video.Statistics.CommentCount;
+            TopicCategories = video.TopicDetails.TopicCategories.Select(categoryUrl => categoryUrl.Replace(WikiBase, "")).ToArray();
+        }
+        #endregion
+
+        public List<SubmittedVideoData> VideosSubmitted { get; set; }
     }
     public class PlaylistData
     {
@@ -99,7 +295,7 @@ internal class Database
         [Key]
         public string PlaylistId { get; set; } = null!;
         //Relation
-        public List<VideoData> Videos { get; set; } = null!;
+        public List<SubmittedVideoData> Videos { get; set; } = null!;
     }
 
     public class BannedVideoData
@@ -135,10 +331,11 @@ internal class Database
         //TODO: Enable AutoHistory https://github.com/Arch/AutoHistory
         //TODO: Consider NeinLinq https://nein.tech/nein-linq/
         //TODO:
-        public DbSet<VideoData> VideosSubmitted { get; set; } = null!;
+        public DbSet<SubmittedVideoData> VideosSubmitted { get; set; } = null!;
         public DbSet<PlaylistData> PlaylistsAdded { get; set; } = null!;
         public DbSet<BannedUserData> BannedUsers { get; set; } = null!;
         public DbSet<BannedVideoData> BannedVideos { get; set; } = null!;
+        public DbSet<YouTubeVideo> YouTubeVideoData { get; set; } = null!;
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
             optionsBuilder
@@ -155,15 +352,16 @@ internal class Database
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(PlaylistDataEntityTypeConfiguration).Assembly);
-            modelBuilder.ApplyConfigurationsFromAssembly(typeof(VideoDataEntityTypeConfiguration).Assembly);
+            modelBuilder.ApplyConfigurationsFromAssembly(typeof(SubmittedVideoDataEntityTypeConfiguration).Assembly);
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(BannedUserData).Assembly);
             modelBuilder.ApplyConfigurationsFromAssembly(typeof(BannedVideoData).Assembly);
+            modelBuilder.ApplyConfigurationsFromAssembly(typeof(YouTubeVideo).Assembly);
         }
         #endregion
     }
-    public class VideoDataEntityTypeConfiguration : IEntityTypeConfiguration<VideoData>
+    public class SubmittedVideoDataEntityTypeConfiguration : IEntityTypeConfiguration<SubmittedVideoData>
     {
-        public void Configure(EntityTypeBuilder<VideoData> builder)
+        public void Configure(EntityTypeBuilder<SubmittedVideoData> builder)
         {
             builder
                 .Property(vd => vd.VideoId)
@@ -193,8 +391,31 @@ internal class Database
             // builder
             // 	.HasOne(video => video.PlaylistId)
             // 	.WithMany();
+            //Relations
+            builder.HasOne(svd => svd.Playlist)
+                .WithMany(pd => pd.Videos)
+                .HasForeignKey(svd => svd.PlaylistId)
+                .HasPrincipalKey(pd => pd.PlaylistId);
+            builder.HasOne(vsd => vsd.Video)
+                .WithMany(vsd => vsd.VideosSubmitted)
+                .HasForeignKey(vsd => vsd.VideoId)
+                .HasPrincipalKey(ytvd => ytvd.Id);
             builder
                 .ToTable(LogTableName);
+        }
+    }
+    public class YouTubeVideoDataEntityTypeConfiguration : IEntityTypeConfiguration<YouTubeVideo>
+    {
+        public void Configure(EntityTypeBuilder<YouTubeVideo> builder)
+        {
+            builder.Property(ytvd => ytvd.Id)
+                .IsRequired();
+            builder.HasMany(ytvd => ytvd.VideosSubmitted)
+                .WithOne(vsd=>vsd.Video)
+                .OnDelete(DeleteBehavior.SetNull)
+                .HasForeignKey(vsd=>vsd.VideoId)
+                .HasPrincipalKey(ytvd=>ytvd.Id);
+            builder.ToTable(YouTubeVideoDataTableName);
         }
     }
     public class PlaylistDataEntityTypeConfiguration : IEntityTypeConfiguration<PlaylistData>
@@ -222,14 +443,13 @@ internal class Database
                 .IsRequired()
                 .HasDefaultValueSql("CURRENT_TIMESTAMP");
             // builder
-            // 	.HasMany<VideoData>()
+            // 	.HasMany<SubmittedVideoData>()
             // 	.WithOne(video => video.Playlist)
             // 	.IsRequired();
             builder
                 .ToTable(MainTableName);
         }
     }
-    
     public class BannedVideosEntityTypeConfiguration : IEntityTypeConfiguration<BannedVideoData>
     {
         public void Configure(EntityTypeBuilder<BannedVideoData> builder)
@@ -350,7 +570,7 @@ internal class Database
         DateTimeOffset timeSubmitted, ulong messageId)
     {
         await using DiscordDatabaseContext database = new();
-        await database.AddAsync(new VideoData
+        await database.AddAsync(new SubmittedVideoData
         {
             VideoId = videoId,
             PlaylistItemId = playlistItemId,
@@ -372,11 +592,11 @@ internal class Database
         short? upvotes = null, short? downvotes = null)
     {
         await using DiscordDatabaseContext database = new();
-        VideoData videoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
+        SubmittedVideoData submittedVideoItem = await database.VideosSubmitted.Where(vs => vs.MessageId == messageId && vs.PlaylistId == playlistId).FirstAsync().ConfigureAwait(false);
         if (upvotes is not null)
-            videoItem.Upvotes = upvotes.Value;
+            submittedVideoItem.Upvotes = upvotes.Value;
         if(downvotes is not null)
-            videoItem.Downvotes = downvotes.Value;
+            submittedVideoItem.Downvotes = downvotes.Value;
         int nRows = await database.SaveChangesAsync().ConfigureAwait(false);
         return nRows;
         //database.VideosSubmitted.Where(vs => vs.MessageId == messageId && )
@@ -614,7 +834,7 @@ internal class Database
         ulong? userId = null, string? videoId = null)
     {
         await using DiscordDatabaseContext database = new();
-        IQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
+        IQueryable<SubmittedVideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId);
         if (messageId is null && userId is null && videoId is null)
         {
             throw new Exception("At least one of messageId, userId, or videoId must not be null");
@@ -634,7 +854,7 @@ internal class Database
 
         try
         {
-            List<VideoData> rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
+            List<SubmittedVideoData> rowData = await whereQuery.ToListAsync().ConfigureAwait(false);
             database.RemoveRange(rowData);
             int nRows = await database.SaveChangesAsync().ConfigureAwait(false);
             return nRows;
@@ -654,10 +874,10 @@ internal class Database
         return await database.SaveChangesAsync().ConfigureAwait(false);
     }
 
-    public async Task<List<VideoData>> GetRankedPlaylistItems(string playlistId)
+    public async Task<List<SubmittedVideoData>> GetRankedPlaylistItems(string playlistId)
     {
         await using DiscordDatabaseContext database = new();
-        IOrderedQueryable<VideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
+        IOrderedQueryable<SubmittedVideoData> whereQuery = database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistId).OrderByDescending(vs=>vs.Upvotes);
         return await whereQuery.ToListAsync().ConfigureAwait(false);
     }
 
@@ -668,7 +888,7 @@ internal class Database
         return await database.VideosSubmitted.Where(vs => vs.PlaylistId == playlistID).DeleteAsync().ConfigureAwait(false);
     }
 
-    internal async Task<List<VideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<VideoData, bool>> whereFunc)
+    internal async Task<List<SubmittedVideoData>> GetPlaylistItemsCustomWhereFunc(Expression<Func<SubmittedVideoData, bool>> whereFunc)
     {
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted.Where(whereFunc).ToListAsync().ConfigureAwait(false);
@@ -703,7 +923,7 @@ internal class Database
         // 			video => (video.WeeklyPlaylistItemId == null || 
         // 			          video.WeeklyPlaylistItemId.Length == 0) &&
         // 			         startOfWeek <= video.TimeSubmitted)
-        // 		.Select(video => new VideoData
+        // 		.Select(video => new SubmittedVideoData
         // 		{
         // 			WeeklyPlaylistItemId = video.WeeklyPlaylistItemId,
         // 			VideoId = video.VideoId
@@ -721,7 +941,7 @@ internal class Database
                 playlistData.WeeklyPlaylistID = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.WeeklyTimeCreated = DateTime.Now.ToUniversalTime();
             }
-            foreach (VideoData videoData in playlistData.Videos)
+            foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
                 //TODO: Allow Making new playlist on error and handle that
                 PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.WeeklyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
@@ -752,7 +972,7 @@ internal class Database
         // 			video => (video.MonthlyPlaylistItemId == null || 
         // 			          video.MonthlyPlaylistItemId.Length == 0) &&
         // 			         startOfMonth <= video.TimeSubmitted)
-        // 		.Select(video => new VideoData
+        // 		.Select(video => new SubmittedVideoData
         // 		{
         // 			MonthlyPlaylistItemId = video.MonthlyPlaylistItemId,
         // 			VideoId = video.VideoId
@@ -770,7 +990,7 @@ internal class Database
                 playlistData.MonthlyPlaylistID = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.MonthlyTimeCreated = DateTime.Now.ToUniversalTime();
             }
-            foreach (VideoData videoData in playlistData.Videos)
+            foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
                 //TODO: Allow Making new playlist on error and handle that
                 PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.MonthlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
@@ -801,7 +1021,7 @@ internal class Database
         // 			video => (video.YearlyPlaylistItemId == null || 
         // 			          video.YearlyPlaylistItemId.Length == 0) &&
         // 			         startOfYear <= video.TimeSubmitted)
-        // 		.Select(video => new VideoData
+        // 		.Select(video => new SubmittedVideoData
         // 		{
         // 			YearlyPlaylistItemId = video.YearlyPlaylistItemId,
         // 			VideoId = video.VideoId
@@ -819,7 +1039,7 @@ internal class Database
                 playlistData.YearlyPlaylistID = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
                 playlistData.YearlyTimeCreated = DateTime.Now.ToUniversalTime();
             }
-            foreach (VideoData videoData in playlistData.Videos)
+            foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
                 //TODO: Allow Making new playlist on error and handle that
                 PlaylistItem playlistItem = await YoutubeAPIs.Instance.AddToPlaylist(videoData.VideoId, playlistId: playlistData.YearlyPlaylistID, makeNewPlaylistOnError: false).ConfigureAwait(false);
@@ -835,7 +1055,7 @@ internal class Database
     #endregion
     #region TimeBasedFuncs
     //Weekly Add
-    private static Expression<Func<VideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
+    private static Expression<Func<SubmittedVideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
         DateTime dt = passedDateTime ?? DateTime.Now;
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
@@ -845,7 +1065,7 @@ internal class Database
     public const DayOfWeek StartOfWeek = DayOfWeek.Sunday;
 
     //Monthly Add
-    private static Expression<Func<VideoData, bool>> MonthlySubmissionsToAddFunc(DateTime? passedDateTime = null)
+    private static Expression<Func<SubmittedVideoData, bool>> MonthlySubmissionsToAddFunc(DateTime? passedDateTime = null)
     {
         DateTime dt = passedDateTime ?? DateTime.Now;
         DateTime startOfMonth = dt.StartOfMonth();
@@ -854,7 +1074,7 @@ internal class Database
     }
 
     //Yearly Add
-    private static Expression<Func<VideoData, bool>> YearlySubmissionsToAddFunc(DateTime? passedDateTime = null)
+    private static Expression<Func<SubmittedVideoData, bool>> YearlySubmissionsToAddFunc(DateTime? passedDateTime = null)
     {
         DateTime dt = passedDateTime ?? DateTime.Now;
         DateTime startOfYear = dt.StartOfYear();
@@ -863,7 +1083,7 @@ internal class Database
     }
 
     //Weekly Remove
-    private static Expression<Func<VideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = true)
+    private static Expression<Func<SubmittedVideoData, bool>> WeeklySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
@@ -880,7 +1100,7 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(video => video.WeeklyPlaylistItemId == playlistItemId)
-            .UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
     internal async Task<int> NullAllWeeklyPlaylistItem(DateTime? passedDateTime = null)
@@ -888,11 +1108,11 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(WeeklySubmissionsToRemoveFunc(passedDateTime))
-            .UpdateFromQueryAsync(video => new VideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { WeeklyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
     //Monthly Remove
-    private static Expression<Func<VideoData, bool>> MonthlySubmissionsToRemoveFunc(DateTime? passedDateTime = null)
+    private static Expression<Func<SubmittedVideoData, bool>> MonthlySubmissionsToRemoveFunc(DateTime? passedDateTime = null)
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfMonth = dt.StartOfMonth();
@@ -913,7 +1133,7 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(video => video.MonthlyPlaylistItemId == playlistItemId)
-            .UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
     internal async Task<int> NullAllMonthlyPlaylistItem(DateTime? passedDateTime = null)
@@ -921,12 +1141,12 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(MonthlySubmissionsToRemoveFunc(passedDateTime))
-            .UpdateFromQueryAsync(video => new VideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { MonthlyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
 
     //Yearly Remove
-    private static Expression<Func<VideoData, bool>> YearlySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
+    private static Expression<Func<SubmittedVideoData, bool>> YearlySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfYear = dt.StartOfYear();
@@ -945,7 +1165,7 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(video => video.YearlyPlaylistItemId == playlistItemId)
-            .UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
     internal async Task<int> NullAllYearlyPlaylistItem(DateTime? passedDateTime = null)
@@ -953,12 +1173,12 @@ internal class Database
         await using DiscordDatabaseContext database = new();
         return await database.VideosSubmitted
             .Where(YearlySubmissionsToRemoveFunc(passedDateTime))
-            .UpdateFromQueryAsync(video => new VideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
+            .UpdateFromQueryAsync(video => new SubmittedVideoData { YearlyPlaylistItemId = null }).ConfigureAwait(false);
     }
 
 #endregion
 
-    public async Task<VideoData?> GetPlaylistItem(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
+    public async Task<SubmittedVideoData?> GetPlaylistItem(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
     {
         //When grabbing only one item, must be more specific than just the playlist it's in
         if (messageId is null && userId is null && videoId is null)
@@ -966,7 +1186,7 @@ internal class Database
         	throw new Exception("At least one of messageId, userId, or videoId must not be null");
         }
         await using DiscordDatabaseContext database = new();
-        IQueryable<VideoData>? whereQuery = null;
+        IQueryable<SubmittedVideoData>? whereQuery = null;
         if (messageId is not null)
         {
             whereQuery = whereQuery is null ? database.VideosSubmitted.Where(vs=>vs.MessageId == messageId) : whereQuery.Where(vs => vs.MessageId == messageId);
@@ -980,20 +1200,20 @@ internal class Database
             whereQuery = whereQuery is null ? database.VideosSubmitted.Where(vs => vs.VideoId == videoId) : whereQuery.Where(vs => vs.VideoId == videoId);
         }
 
-        VideoData? video = whereQuery is null
+        SubmittedVideoData? video = whereQuery is null
             ? await database.VideosSubmitted.AsNoTracking().FirstOrDefaultAsync().ConfigureAwait(false)
             : await whereQuery.AsNoTracking().FirstOrDefaultAsync().ConfigureAwait(false);
         return video;
     }
 
-    public async Task<List<VideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
+    public async Task<List<SubmittedVideoData>> GetPlaylistItems(string playlistId, ulong? messageId = null, ulong? userId = null, string? videoId = null)
     {
         // if (messageId is null && userId is null && videoId is null)
         // {
         // 	throw new Exception("At least one of messageId, userId, or videoId must not be null");
         // }
-        Expression<Func<VideoData, bool>>? whereExpression = vs => vs.PlaylistId == playlistId;
-        IQueryable<VideoData>? whereQuery = null;
+        Expression<Func<SubmittedVideoData, bool>>? whereExpression = vs => vs.PlaylistId == playlistId;
+        IQueryable<SubmittedVideoData>? whereQuery = null;
         await using DiscordDatabaseContext database = new();
         if (messageId is not null)
         {
@@ -1020,7 +1240,7 @@ internal class Database
         return vid;
     }
 
-    internal async Task<List<VideoData>> GetPlaylistItemsUnsafe(DiscordDatabaseContext database, IQueryable<VideoData>? whereQuery = null)
+    internal async Task<List<SubmittedVideoData>> GetPlaylistItemsUnsafe(DiscordDatabaseContext database, IQueryable<SubmittedVideoData>? whereQuery = null)
     {
         return whereQuery is null
             ? await database.VideosSubmitted.ToListAsync().ConfigureAwait(false)
@@ -1150,7 +1370,7 @@ internal class Database
         else
         {
             await database.VideosSubmitted.Where(vs => vs.PlaylistId == oldPlaylistId)
-                .UpdateAsync(vs => new VideoData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
+                .UpdateAsync(vs => new SubmittedVideoData { PlaylistId = newPlaylistId }).ConfigureAwait(false);
         }
         Log.Verbose($"Number of rows updated={nRows}");
     }

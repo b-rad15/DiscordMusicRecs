@@ -220,7 +220,7 @@ public class SlashCommands : ApplicationCommandModule
             return;
         }
 
-        List<Database.VideoData> sortedPlaylistItems = await Database.Instance.GetRankedPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
+        List<Database.SubmittedVideoData> sortedPlaylistItems = await Database.Instance.GetRankedPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
         DiscordEmbedBuilder embedBuilder = new()
         {
             Title = $"{playlistChannel.Name}'s Top Tracks"
@@ -231,7 +231,7 @@ public class SlashCommands : ApplicationCommandModule
 	        embedBuilder.WithDescription("No Tracks Found in Playlist");
         else
         {
-	        foreach (Database.VideoData item in sortedPlaylistItems)
+	        foreach (Database.SubmittedVideoData item in sortedPlaylistItems)
 	        {
 		        Debug.Assert(item.VideoId != null, "item?.videoId != null");
 		        rankingString +=
@@ -659,9 +659,9 @@ public class SlashCommands : ApplicationCommandModule
                 if (rowData?.PlaylistId is not null)
                 {
                     ulong channelId;
-                    List<Database.VideoData> playlistEntries =
+                    List<Database.SubmittedVideoData> playlistEntries =
                         await Database.Instance.GetPlaylistItems(rowData.PlaylistId).ConfigureAwait(false);
-                    foreach (Database.VideoData? playlistEntry in playlistEntries)
+                    foreach (Database.SubmittedVideoData? playlistEntry in playlistEntries)
                     {
                         if (playlistEntry?.ChannelId is null)
                         {
@@ -737,7 +737,7 @@ public class SlashCommands : ApplicationCommandModule
                     return;
                 }
 
-                Database.VideoData? vidToDelete = await Database.Instance
+                Database.SubmittedVideoData? vidToDelete = await Database.Instance
                     .GetPlaylistItem(rowData.PlaylistId, videoId: id).ConfigureAwait(false);
                 if (vidToDelete is null)
                 {
@@ -846,7 +846,7 @@ public class SlashCommands : ApplicationCommandModule
             string removeString = $"Removing from playlist {YoutubeAPIs.IdToPlaylist(rowData.PlaylistId)}\n";
             await ctx.EditResponseAsync(msg.WithContent(removeString)).ConfigureAwait(false);
 
-            List<Database.VideoData> vidsToDelete = await Database.Instance
+            List<Database.SubmittedVideoData> vidsToDelete = await Database.Instance
                 .GetPlaylistItems(rowData.PlaylistId, userId: badUser.Id).ConfigureAwait(false);
             if (vidsToDelete.Count == 0)
             {
@@ -855,7 +855,7 @@ public class SlashCommands : ApplicationCommandModule
                 return;
             }
 
-            foreach (Database.VideoData vidToDelete in vidsToDelete)
+            foreach (Database.SubmittedVideoData vidToDelete in vidsToDelete)
             {
                 removeString += await DeleteEntryFromPlaylist(vidToDelete, rowData.PlaylistId!, deleteMessage)
                     .ConfigureAwait(false);
@@ -1180,7 +1180,7 @@ public class SlashCommands : ApplicationCommandModule
             Log.Error(e.ToString());
 	    }
     }
-    private static async Task<string> DeleteEntryFromPlaylist(Database.VideoData entry, string playlistId, bool removeMessage = true)
+    private static async Task<string> DeleteEntryFromPlaylist(Database.SubmittedVideoData entry, string playlistId, bool removeMessage = true)
     {
 	    string removeString = "";
 	    try

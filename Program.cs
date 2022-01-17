@@ -10,6 +10,7 @@ using DSharpPlus.Interactivity.Extensions;
 using DSharpPlus.SlashCommands;
 using Google;
 using Google.Apis.YouTube.v3.Data;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Serilog;
 using Serilog.Events;
@@ -171,7 +172,7 @@ internal class Program
 	    {
 		    return;
 	    }
-	    Database.VideoData? playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, messageId: message.Id).ConfigureAwait(false);
+	    Database.SubmittedVideoData? playlistEntryData = await Database.Instance.GetPlaylistItem(rowData.PlaylistId, messageId: message.Id).ConfigureAwait(false);
 	    if (playlistEntryData is null)
 	    {
 		    return;
@@ -264,7 +265,7 @@ internal class Program
 		                        await Database.Instance.ChangePlaylistId(e.Guild.Id, e.Channel.Id, usedPlaylistItem.Snippet.PlaylistId, playlistId).ConfigureAwait(false);
 		                        // await Database.Instance.MakePlaylistTable(usedPlaylistItem.Snippet.PlaylistId).ConfigureAwait(false);
 	                        }
-
+                            //TODO: Move database insert before playlist add to lower chance of race conditions doubling playlist entries
 	                        dbSuccess = 0 < await Database.Instance.AddVideoToPlaylistTable(usedPlaylistItem.Snippet.PlaylistId, id,
 		                        usedPlaylistItem.Id, weeklyPlaylistItem.Id, monthlyPlaylistItem.Id, yearlyPlaylistItem.Id, e.Channel.Id, e.Author.Id,
 		                        e.Message.Timestamp, e.Message.Id).ConfigureAwait(false);
@@ -326,6 +327,30 @@ internal class Program
                                 shouldDeleteMessage = true;
                                 throw;
                             }
+                        }
+                        
+                        try
+                        {
+                            (Video? youTubeVideoDataRaw, _) = await YoutubeAPIs.Instance.GetYoutubeVideoData(id).ConfigureAwait(false);
+                            if (youTubeVideoDataRaw == null)
+                            {
+                                Log.Error($"Youtube Api returned no data on video {id}");
+                                goto deleteMessage;
+                            }
+                            Database.YouTubeVideo youTubeVideoData = new (id, youTubeVideoDataRaw);
+                            Database.DiscordDatabaseContext database = new();
+                            Database.YouTubeVideo? dbYouTubeVideoData = await database.YouTubeVideoData.Where(ytvd => ytvd.Id == id).FirstOrDefaultAsync().ConfigureAwait(false);
+                            if (dbYouTubeVideoData is not null)
+                            {
+                                database.Remove(dbYouTubeVideoData);
+                            }
+
+                            await database.AddAsync(youTubeVideoData).ConfigureAwait(false);
+                            await database.SaveChangesAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            Log.Error(exception.ToString());
                         }
                     }
                     else

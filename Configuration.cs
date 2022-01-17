@@ -32,6 +32,8 @@ namespace DiscordMusicRecs
 			public string MainTableName { get; set; }
             [DataMember(IsRequired = true)]
 			public string LogTableName { get; set; }
+            [DataMember(IsRequired = true)]
+			public string YouTubeVideoDataTableName { get; set; }
 		}
         [DataMember(IsRequired = true)]
 		public string InviteUrl { get; set; }

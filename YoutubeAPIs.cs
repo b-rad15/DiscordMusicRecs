@@ -13,7 +13,9 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using System.Xml;
 using Google;
+using Google.Apis;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
@@ -25,6 +27,7 @@ using Google.Apis.YouTube.v3;
 using Google.Apis.YouTube.v3.Data;
 using Microsoft.IdentityModel.Tokens;
 using Newtonsoft.Json;
+using NodaTime;
 using Serilog;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
@@ -418,9 +421,9 @@ internal class YoutubeAPIs
             $"https://music.youtube.com/playlist?list={id}";
     }
 
-
+    #region playlists
     //https://developers.google.com/youtube/v3/code_samples/dotnet
-	public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
+    public async Task<PlaylistItem> AddToPlaylist(string videoID, string playlistId = "", string playlistName = "",
 		string playlistDescription = "", bool makeNewPlaylistOnError = true, bool checkForDupes = false)
 	{
 		if (!initialized)
@@ -523,7 +526,6 @@ internal class YoutubeAPIs
         string? pagingToken = "";
         while (pagingToken is not null)
         {
-            Debug.Assert(youTubeService != null, nameof(youTubeService) + " != null");
             PlaylistsResource.ListRequest? playlistsRequest = youTubeService.Playlists.List("snippet");
             playlistsRequest.Mine = true;
             playlistsRequest.MaxResults = 100;
@@ -705,5 +707,30 @@ internal class YoutubeAPIs
         }
 
         return vidsRemoved;
+    }
+#endregion playlist
+
+
+    public async Task<(Video?, string)>  GetYoutubeVideoData(string videoId)
+    {
+        YouTubeService? youTubeService = new(new BaseClientService.Initializer
+        {
+            HttpClientInitializer = credential,
+            ApplicationName = ApplicationName,
+            DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
+        });
+        VideosResource.ListRequest? listRequest = youTubeService.Videos.List("snippet,contentDetails,statistics,id,topicDetails");
+        listRequest.Id = videoId;
+        listRequest.Hl = "en_US";
+        listRequest.ETagAction = ETagAction.IfNoneMatch;
+        //TODO: Implement this with only the necessary fields
+        // listRequest.Fields = "";
+        listRequest.QuotaUser = "GetYoutubeVideoData";
+        // TODO: Implement ETag checking
+        // HttpRequestMessage httpRequestMessage = listRequest.CreateRequest();
+        // httpRequestMessage.Headers.Add("If-None-Match", "Etag");
+        VideoListResponse? response = await listRequest.ExecuteAsync().ConfigureAwait(false);
+        
+        return (response.Items.FirstOrDefault(), response.ETag);
     }
 }
