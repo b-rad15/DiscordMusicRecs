@@ -21,7 +21,6 @@ using Google.Apis.YouTube.v3.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.Extensions.Logging;
-using NodaTime;
 using Npgsql;
 using NpgsqlTypes;
 using Serilog;
@@ -62,7 +61,7 @@ internal class Database
         [Required]
         public ulong UserId { get; set; }
         [Required]
-        public DateTime TimeSubmitted { get; set; }
+        public NodaTime.Instant TimeSubmitted { get; set; }
         [Required]
         [Key]
         public ulong MessageId { get; set; }
@@ -90,55 +89,55 @@ internal class Database
     }
     public class YouTubeVideo
     {
-        public string? ETag { get; }
-        public string Id { get; }
+        public string? ETag { get; set; }
+        public string Id { get;set; }
 
         #region snippet
-        public DateTime? PublishedAt { get; }
-        public string? ChannelId { get; }
-        public string? Title { get; }
-        public string? Description { get; }
-        public string? Thumbnail { get; }
-        public string? ChannelTitle { get; }
-        public string[]? Tags { get; }
-        public string? CategoryId { get; }
-        public string? LiveBroadcastContent { get; }
-        public string? DefaultLanguage { get; }
-        public string? LocalizedTitle { get; }
-        public string? LocalizedDescription { get; }
-        public string? DefaultAudioLanguage { get; }
+        public NodaTime.Instant? PublishedAt { get; set; }
+        public string? ChannelId { get; set; }
+        public string? Title { get; set; }
+        public string? Description { get; set; }
+        public string? Thumbnail { get; set; }
+        public string? ChannelTitle { get; set; }
+        public string[]? Tags { get; set; }
+        public string? CategoryId { get; set; }
+        public string? LiveBroadcastContent { get; set; }
+        public string? DefaultLanguage { get; set; }
+        public string? LocalizedTitle { get; set; }
+        public string? LocalizedDescription { get; set; }
+        public string? DefaultAudioLanguage { get; set; }
         #endregion
 
         #region contentDetails
-        public Duration? Duration { get; }
-        public string? Dimension { get; }
+        public NodaTime.Duration? Duration { get; set; }
+        public string? Dimension { get; set; }
         //Alternative to using Dimension since options are 2D or 3D
-        public bool Is3D { get; } = false;
+        public bool Is3D { get; set; } = false;
         //To Limit to official uploads only
-        public bool? LicensedContent { get; }
+        public bool? LicensedContent { get; set; }
         //must be used in conjunction with IsRestricted
-        public string[]? RestrictedRegions { get; }
+        public string[]? RestrictedRegions { get; set; }
         //True if RestrictedRegions is a blocked list (blacklist), false if RestrictedRegions is an allowed list (whitelist) or if RestrictedRegions is null
-        public bool IsRestricted { get; } = false;
+        public bool IsRestricted { get; set; } = false;
         //TODO: Implement Content Rating Check
         //360 or rectangular
-        public string? Projection { get; }
+        public string? Projection { get; set; }
         #endregion
 
         #region status
         //TODO: Implement rest of status
-        public string? UploadStatus { get; }
-        public string? PrivacyStatus { get; }
-        public bool? PublicStatsViewable { get; }
-        public bool? MadeForKids { get; }
+        public string? UploadStatus { get; set; }
+        public string? PrivacyStatus { get; set; }
+        public bool? PublicStatsViewable { get; set; }
+        public bool? MadeForKids { get; set; }
         #endregion
 
         #region statistics
-        public ulong? ViewCount { get; }
-        public ulong? LikeCount { get; }
-        public ulong? DislikeCount { get; }
-        public ulong? FavoriteCount { get; }
-        public ulong? CommentCount { get; }
+        public ulong? ViewCount { get; set; }
+        public ulong? LikeCount { get; set; }
+        public ulong? DislikeCount { get; set; }
+        public ulong? FavoriteCount { get; set; }
+        public ulong? CommentCount { get; set; }
         #endregion
 
         #region topicDetails
@@ -146,15 +145,16 @@ internal class Database
         public const string WikipediaUrl = "https://en.wikipedia.org";
         public const string WikiBase = $"{WikipediaUrl}/wiki/";
         //contains only extensions on top of WikiBase
-        public string[]? TopicCategories { get; }
+        public string[]? TopicCategories { get; set; }
         #endregion
 
         #region construction
+        public YouTubeVideo(){}
         public YouTubeVideo(string id, string? eTag = null, DateTime? publishedAt = default, string? channelId = null,
             string? title = null, string? description = null, string? thumbnail = null, string? channelTitle = null,
             string[]? tags = null, string? categoryId = null, string? liveBroadcastContent = null,
             string? defaultLanguage = null, string? localizedTitle = null, string? localizedDescription = null,
-            string? defaultAudioLanguage = null, Duration? duration = default, string? dimension = null,
+            string? defaultAudioLanguage = null, NodaTime.Duration? duration = default, string? dimension = null,
             bool is3D = default, bool? licensedContent = default, string[]? restrictedRegions = null,
             bool isRestricted = default, string? projection = null, string? uploadStatus = null,
             string? privacyStatus = null, bool? publicStatsViewable = default, bool? madeForKids = default,
@@ -163,7 +163,7 @@ internal class Database
         {
             ETag = eTag;
             Id = id;
-            PublishedAt = publishedAt;
+            PublishedAt = publishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(publishedAt.Value) : null;
             ChannelId = channelId;
             Title = title;
             Description = description;
@@ -207,7 +207,7 @@ internal class Database
         {
             ETag = eTag;
             Id = id;
-            PublishedAt = publishedAt;
+            PublishedAt = publishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(publishedAt.Value) : null;
             ChannelId = channelId;
             Title = title;
             Description = description;
@@ -244,7 +244,7 @@ internal class Database
 
             ETag = video.Snippet.ETag;
             Id = videoId;
-            PublishedAt = video.Snippet.PublishedAt;
+            PublishedAt = video.Snippet.PublishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(video.Snippet.PublishedAt.Value) : null;
             ChannelId = video.Snippet.ChannelId;
             Title = video.Snippet.Title;
             Description = video.Snippet.Description;
@@ -285,12 +285,12 @@ internal class Database
         public ulong? ChannelId { get; set; }
         public bool IsConnectedToChannel { get; set; }
         public string WeeklyPlaylistID { get; set; } = null!;
-        public DateTime WeeklyTimeCreated { get; set; }
+        public NodaTime.Instant WeeklyTimeCreated { get; set; }
         public string MonthlyPlaylistID { get; set; } = null!;
-        public DateTime MonthlyTimeCreated { get; set; }
+        public NodaTime.Instant MonthlyTimeCreated { get; set; }
         public string YearlyPlaylistID { get; set; } = null!;
-        public DateTime YearlyTimeCreated { get; set; }
-        public DateTime TimeCreated { get; set; }
+        public NodaTime.Instant YearlyTimeCreated { get; set; }
+        public NodaTime.Instant TimeCreated { get; set; }
         [Required]
         [Key]
         public string PlaylistId { get; set; } = null!;

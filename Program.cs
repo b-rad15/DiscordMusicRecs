@@ -246,7 +246,7 @@ internal class Program
                             }
                         }
 
-                        string playlistId = rowData?.PlaylistId!;
+                        string playlistId = rowData.PlaylistId;
                         bool dbSuccess = false;
                         List<string> playlistItemsAdded = new();
                         try
