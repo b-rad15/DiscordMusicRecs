@@ -101,7 +101,7 @@ internal class YoutubeAPIs
 				"user",
 				CancellationToken.None,
 				new FileDataStore(ApplicationName)
-			).ConfigureAwait(false);
+            ).ConfigureAwait(false);
 		}
 		initialized = true;
 	}
@@ -719,7 +719,7 @@ internal class YoutubeAPIs
             ApplicationName = ApplicationName,
             DefaultExponentialBackOffPolicy = ExponentialBackOffPolicy.Exception | ExponentialBackOffPolicy.UnsuccessfulResponse503
         });
-        VideosResource.ListRequest? listRequest = youTubeService.Videos.List("snippet,contentDetails,statistics,id,topicDetails");
+        VideosResource.ListRequest? listRequest = youTubeService.Videos.List("snippet,contentDetails,statistics,id,topicDetails,status");
         listRequest.Id = videoId;
         listRequest.Hl = "en_US";
         listRequest.ETagAction = ETagAction.IfNoneMatch;

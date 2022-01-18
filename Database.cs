@@ -21,6 +21,7 @@ using Google.Apis.YouTube.v3.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using Npgsql;
 using NpgsqlTypes;
 using Serilog;
@@ -46,7 +47,7 @@ internal class Database
     private readonly NpgsqlConnection Connection = null!;
 
     // Build connection string using parameters from portal
-    private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5";
+    private static string BaseConnectionString => $"Server={Host};Username={User};Database={DBname};Port={Port};Password={Password};SSLMode=Prefer;Pooling=true;Command Timeout=5;Include Error Detail=true;";
 
     public class SubmittedVideoData
     {
@@ -61,7 +62,7 @@ internal class Database
         [Required]
         public ulong UserId { get; set; }
         [Required]
-        public NodaTime.Instant TimeSubmitted { get; set; }
+        public NodaTime.ZonedDateTime TimeSubmitted { get; set; }
         [Required]
         [Key]
         public ulong MessageId { get; set; }
@@ -72,8 +73,6 @@ internal class Database
         //Relation to playlist
         public string PlaylistId { get; set; } = null!;
         public PlaylistData Playlist { get; set; } = null!;
-        //Relation to YouTube data
-        public YouTubeVideo Video { get; set; }
     }
 
     public readonly struct SubmittedVideoDataAndContext
@@ -93,7 +92,7 @@ internal class Database
         public string Id { get;set; }
 
         #region snippet
-        public NodaTime.Instant? PublishedAt { get; set; }
+        public NodaTime.ZonedDateTime? PublishedAt { get; set; }
         public string? ChannelId { get; set; }
         public string? Title { get; set; }
         public string? Description { get; set; }
@@ -163,7 +162,7 @@ internal class Database
         {
             ETag = eTag;
             Id = id;
-            PublishedAt = publishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(publishedAt.Value) : null;
+            PublishedAt = publishedAt is not null ? NodaTime.ZonedDateTime.FromDateTimeOffset(publishedAt.Value).WithZone(DateTimeZone.Utc) : null;
             ChannelId = channelId;
             Title = title;
             Description = description;
@@ -207,7 +206,7 @@ internal class Database
         {
             ETag = eTag;
             Id = id;
-            PublishedAt = publishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(publishedAt.Value) : null;
+            PublishedAt = publishedAt is not null ? NodaTime.ZonedDateTime.FromDateTimeOffset(publishedAt.Value).WithZone(DateTimeZone.Utc) : null;
             ChannelId = channelId;
             Title = title;
             Description = description;
@@ -241,43 +240,41 @@ internal class Database
 
         public YouTubeVideo(string videoId, Video video)
         {
-
-            ETag = video.Snippet.ETag;
+            ETag = video.Snippet?.ETag;
             Id = videoId;
-            PublishedAt = video.Snippet.PublishedAt is not null ? NodaTime.Instant.FromDateTimeUtc(video.Snippet.PublishedAt.Value) : null;
-            ChannelId = video.Snippet.ChannelId;
-            Title = video.Snippet.Title;
-            Description = video.Snippet.Description;
-            Thumbnail = video.Snippet.Thumbnails.Default__.Url;
-            ChannelTitle = video.Snippet.ChannelTitle;
-            Tags = video.Snippet.Tags.ToArray();
-            CategoryId = video.Snippet.CategoryId;
-            LiveBroadcastContent = video.Snippet.LiveBroadcastContent;
-            DefaultLanguage = video.Snippet.DefaultLanguage;
-            LocalizedTitle = video.Snippet.Localized.Title;
-            LocalizedDescription = video.Snippet.Localized.Description;
-            DefaultAudioLanguage = video.Snippet.DefaultAudioLanguage;
-            Duration = NodaTime.Duration.FromTimeSpan(XmlConvert.ToTimeSpan(video.ContentDetails.Duration));
-            Dimension = video.ContentDetails.Dimension;
-            Is3D = Dimension.ToLower() == "3d";
-            LicensedContent = video.ContentDetails.LicensedContent;
-            RestrictedRegions = video.ContentDetails.RegionRestriction.Allowed is { Count: > 0 } ? video.ContentDetails.RegionRestriction.Allowed.ToArray() : video.ContentDetails.RegionRestriction.Blocked.ToArray();
-            IsRestricted = video.ContentDetails.RegionRestriction.Blocked is { Count: > 0 };
-            Projection = video.ContentDetails.Projection;
-            UploadStatus = video.Status.UploadStatus;
-            PrivacyStatus = video.Status.PrivacyStatus;
-            PublicStatsViewable = video.Status.PublicStatsViewable;
-            MadeForKids = video.Status.MadeForKids;
-            ViewCount = video.Statistics.ViewCount;
-            LikeCount = video.Statistics.LikeCount;
-            DislikeCount = video.Statistics.DislikeCount;
-            FavoriteCount = video.Statistics.FavoriteCount;
-            CommentCount = video.Statistics.CommentCount;
-            TopicCategories = video.TopicDetails.TopicCategories.Select(categoryUrl => categoryUrl.Replace(WikiBase, "")).ToArray();
+            PublishedAt = video.Snippet?.PublishedAt is not null ? NodaTime.ZonedDateTime.FromDateTimeOffset(video.Snippet.PublishedAt.Value).WithZone(DateTimeZone.Utc) : null;
+            ChannelId = video.Snippet?.ChannelId;
+            Title = video.Snippet?.Title;
+            Description = video.Snippet?.Description;
+            Thumbnail = video.Snippet?.Thumbnails.Default__.Url;
+            ChannelTitle = video.Snippet?.ChannelTitle;
+            Tags = video.Snippet?.Tags.ToArray();
+            CategoryId = video.Snippet?.CategoryId;
+            LiveBroadcastContent = video.Snippet?.LiveBroadcastContent;
+            DefaultLanguage = video.Snippet?.DefaultLanguage;
+            LocalizedTitle = video.Snippet?.Localized.Title;
+            LocalizedDescription = video.Snippet?.Localized.Description;
+            DefaultAudioLanguage = video.Snippet?.DefaultAudioLanguage;
+            Duration = video.ContentDetails?.Duration == null ? null : NodaTime.Duration.FromTimeSpan(XmlConvert.ToTimeSpan(video.ContentDetails.Duration));
+            Dimension = video.ContentDetails?.Dimension;
+            Is3D = Dimension?.ToLower() == "3d";
+            LicensedContent = video.ContentDetails?.LicensedContent;
+            RestrictedRegions = video.ContentDetails?.RegionRestriction.Allowed is { Count: > 0 } ? video.ContentDetails?.RegionRestriction.Allowed.ToArray() : video.ContentDetails?.RegionRestriction.Blocked.ToArray();
+            IsRestricted = video.ContentDetails?.RegionRestriction.Blocked is { Count: > 0 };
+            Projection = video.ContentDetails?.Projection;
+            UploadStatus = video.Status?.UploadStatus;
+            PrivacyStatus = video.Status?.PrivacyStatus;
+            PublicStatsViewable = video.Status?.PublicStatsViewable;
+            MadeForKids = video.Status?.MadeForKids;
+            ViewCount = video.Statistics?.ViewCount;
+            LikeCount = video.Statistics?.LikeCount;
+            DislikeCount = video.Statistics?.DislikeCount;
+            FavoriteCount = video.Statistics?.FavoriteCount;
+            CommentCount = video.Statistics?.CommentCount;
+            TopicCategories = video.TopicDetails?.TopicCategories.Select(categoryUrl => categoryUrl.Replace(WikiBase, "")).ToArray();
         }
         #endregion
-
-        public List<SubmittedVideoData> VideosSubmitted { get; set; }
+        
     }
     public class PlaylistData
     {
@@ -285,12 +282,12 @@ internal class Database
         public ulong? ChannelId { get; set; }
         public bool IsConnectedToChannel { get; set; }
         public string WeeklyPlaylistID { get; set; } = null!;
-        public NodaTime.Instant WeeklyTimeCreated { get; set; }
+        public NodaTime.ZonedDateTime WeeklyTimeCreated { get; set; }
         public string MonthlyPlaylistID { get; set; } = null!;
-        public NodaTime.Instant MonthlyTimeCreated { get; set; }
+        public NodaTime.ZonedDateTime MonthlyTimeCreated { get; set; }
         public string YearlyPlaylistID { get; set; } = null!;
-        public NodaTime.Instant YearlyTimeCreated { get; set; }
-        public NodaTime.Instant TimeCreated { get; set; }
+        public NodaTime.ZonedDateTime YearlyTimeCreated { get; set; }
+        public NodaTime.ZonedDateTime TimeCreated { get; set; }
         [Required]
         [Key]
         public string PlaylistId { get; set; } = null!;
@@ -344,7 +341,8 @@ internal class Database
                     options => options
                         .UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)
                         .UseAdminDatabase("postgres")
-                        .EnableRetryOnFailure(5))
+                        .EnableRetryOnFailure(5)
+                        .UseNodaTime())
                 .UseSnakeCaseNamingConvention()
                 .LogTo(Log.Verbose, LogLevel.Information)
                 .EnableSensitiveDataLogging();
@@ -396,10 +394,11 @@ internal class Database
                 .WithMany(pd => pd.Videos)
                 .HasForeignKey(svd => svd.PlaylistId)
                 .HasPrincipalKey(pd => pd.PlaylistId);
-            builder.HasOne(vsd => vsd.Video)
-                .WithMany(vsd => vsd.VideosSubmitted)
-                .HasForeignKey(vsd => vsd.VideoId)
-                .HasPrincipalKey(ytvd => ytvd.Id);
+            //TODO: Figure out this relation
+            // builder.HasOne(vsd => vsd.Video)
+            //     .WithMany(vsd => vsd.VideosSubmitted)
+            //     .HasForeignKey(vsd => vsd.VideoId)
+            //     .HasPrincipalKey(ytvd => ytvd.Id);
             builder
                 .ToTable(LogTableName);
         }
@@ -410,11 +409,12 @@ internal class Database
         {
             builder.Property(ytvd => ytvd.Id)
                 .IsRequired();
-            builder.HasMany(ytvd => ytvd.VideosSubmitted)
-                .WithOne(vsd=>vsd.Video)
-                .OnDelete(DeleteBehavior.SetNull)
-                .HasForeignKey(vsd=>vsd.VideoId)
-                .HasPrincipalKey(ytvd=>ytvd.Id);
+            //TODO: Figure out this relation
+            // builder.HasMany(ytvd => ytvd.VideosSubmitted)
+            //     .WithOne(vsd=>vsd.Video)
+            //     .OnDelete(DeleteBehavior.SetNull)
+            //     .HasForeignKey(vsd=>vsd.VideoId)
+            //     .HasPrincipalKey(ytvd=>ytvd.Id);
             builder.ToTable(YouTubeVideoDataTableName);
         }
     }
@@ -579,7 +579,7 @@ internal class Database
             YearlyPlaylistItemId = yearlyPlaylistId,
             ChannelId = channelId,
             UserId = userId,
-            TimeSubmitted = timeSubmitted.DateTime.ToUniversalTime(),
+            TimeSubmitted = ZonedDateTime.FromDateTimeOffset(timeSubmitted).WithZone(DateTimeZone.Utc),
             MessageId = messageId,
             PlaylistId = playlistId
         }).ConfigureAwait(false);
@@ -910,11 +910,13 @@ internal class Database
         DateTime runTime = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         await using DiscordDatabaseContext database = new();
         DateTime startOfWeek = exactlyOneWeek ? runTime.OneWeekAgo() : runTime.StartOfWeek(StartOfWeek);
+        LocalDateTime startOfWeekLocal = ZonedDateTime.FromDateTimeOffset(startOfWeek).WithZone(DateTimeZone.Utc).LocalDateTime;
         //Add if not in a Weekly Playlist already and if the video was submitted after the start of the week
         List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
-            video => (video.WeeklyPlaylistItemId == null ||
-                      video.WeeklyPlaylistItemId.Length == 0) &&
-                     startOfWeek <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+            video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && //If not in weekly playlist and
+                     startOfWeekLocal <= video.TimeSubmitted.LocalDateTime)) //startOfWeek is before TimeSubmitted
+            .ToListAsync().ConfigureAwait(false);
+                     // startOfWeek <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
         // List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
         // {
         // 	PlaylistId = playlist.PlaylistId,
@@ -939,7 +941,7 @@ internal class Database
                 string playlistTitle = server?.Name is not null ? $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}" : YoutubeAPIs.defaultPlaylistName;
                 string playlistDescription = server?.Name is not null ? $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server" : YoutubeAPIs.defaultPlaylistDescription;
                 playlistData.WeeklyPlaylistID = await YoutubeAPIs.Instance.MakeWeeklyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-                playlistData.WeeklyTimeCreated = DateTime.Now.ToUniversalTime();
+                playlistData.WeeklyTimeCreated = SystemClock.Instance.GetCurrentInstant().InUtc();
             }
             foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
@@ -961,9 +963,9 @@ internal class Database
         DateTime startOfMonth = runTime.StartOfMonth();
         //Add if not in a Monthly Playlist already and if the video was submitted after the start of the week
         List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
-            video => (video.MonthlyPlaylistItemId == null ||
-                      video.MonthlyPlaylistItemId.Length == 0) &&
-                     startOfMonth <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+            video => (video.MonthlyPlaylistItemId == null || video.MonthlyPlaylistItemId.Length == 0) && // Not Currently in monthly playlist and
+                     video.TimeSubmitted.Month == runTime.Month && video.TimeSubmitted.Year == runTime.Year)) //Is in the current month
+            .ToListAsync().ConfigureAwait(false);
         // List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
         // {
         // 	PlaylistId = playlist.PlaylistId,
@@ -988,7 +990,7 @@ internal class Database
                 string playlistTitle = server?.Name is not null ? $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}" : YoutubeAPIs.defaultPlaylistName;
                 string playlistDescription = server?.Name is not null ? $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server" : YoutubeAPIs.defaultPlaylistDescription;
                 playlistData.MonthlyPlaylistID = await YoutubeAPIs.Instance.MakeMonthlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-                playlistData.MonthlyTimeCreated = DateTime.Now.ToUniversalTime();
+                playlistData.MonthlyTimeCreated = SystemClock.Instance.GetCurrentInstant().InUtc();
             }
             foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
@@ -1010,9 +1012,9 @@ internal class Database
         DateTime startOfYear = runTime.StartOfYear();
         //Add if not in a Yearly Playlist already and if the video was submitted after the start of the week
         List<PlaylistData> pld = await database.PlaylistsAdded.Include(playlist => playlist.Videos.Where(
-            video => (video.YearlyPlaylistItemId == null ||
-                      video.YearlyPlaylistItemId.Length == 0) &&
-                     startOfYear <= video.TimeSubmitted)).ToListAsync().ConfigureAwait(false);
+            video => (video.YearlyPlaylistItemId == null || video.YearlyPlaylistItemId.Length == 0) && // Not Currently in yearly playlist and
+                     video.TimeSubmitted.Year == runTime.Year)) //Is in the current year
+            .ToListAsync().ConfigureAwait(false);
         // List<PlaylistData> pld = await database.PlaylistsAdded.Select(playlist => new PlaylistData
         // {
         // 	PlaylistId = playlist.PlaylistId,
@@ -1037,7 +1039,7 @@ internal class Database
                 string playlistTitle = server?.Name is not null ? $"{server.Name}'s {YoutubeAPIs.defaultPlaylistName}" : YoutubeAPIs.defaultPlaylistName;
                 string playlistDescription = server?.Name is not null ? $"{YoutubeAPIs.defaultPlaylistDescription} for {server.Name} server" : YoutubeAPIs.defaultPlaylistDescription;
                 playlistData.YearlyPlaylistID = await YoutubeAPIs.Instance.MakeYearlyPlaylist(playlistTitle, playlistDescription).ConfigureAwait(false);
-                playlistData.YearlyTimeCreated = DateTime.Now.ToUniversalTime();
+                playlistData.YearlyTimeCreated = SystemClock.Instance.GetCurrentInstant().InUtc();
             }
             foreach (SubmittedVideoData videoData in playlistData.Videos)
             {
@@ -1057,29 +1059,28 @@ internal class Database
     //Weekly Add
     private static Expression<Func<SubmittedVideoData, bool>> WeeklySubmissionsToAddFunc(DateTime? passedDateTime = null, bool use7days = true)
     {
-        DateTime dt = passedDateTime ?? DateTime.Now;
+        DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
+        LocalDateTime startOfWeekLocal = LocalDateTime.FromDateTime(startOfWeek);
         //Add if not in a Weekly Playlist already and if the video was submitted after the start of the week
-        return video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && startOfWeek <= video.TimeSubmitted;
+        return video => (video.WeeklyPlaylistItemId == null || video.WeeklyPlaylistItemId.Length == 0) && startOfWeekLocal <= video.TimeSubmitted.LocalDateTime;
     }
     public const DayOfWeek StartOfWeek = DayOfWeek.Sunday;
 
     //Monthly Add
     private static Expression<Func<SubmittedVideoData, bool>> MonthlySubmissionsToAddFunc(DateTime? passedDateTime = null)
     {
-        DateTime dt = passedDateTime ?? DateTime.Now;
-        DateTime startOfMonth = dt.StartOfMonth();
+        DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         //Add if not in a Monthly Playlist already and if the video was submitted after the start of the Month
-        return video => (video.MonthlyPlaylistItemId == null || video.MonthlyPlaylistItemId.Length == 0) && startOfMonth <= video.TimeSubmitted;
+        return video => (video.MonthlyPlaylistItemId == null || video.MonthlyPlaylistItemId.Length == 0) && dt.Month == video.TimeSubmitted.Month && dt.Year == video.TimeSubmitted.Year;
     }
 
     //Yearly Add
     private static Expression<Func<SubmittedVideoData, bool>> YearlySubmissionsToAddFunc(DateTime? passedDateTime = null)
     {
-        DateTime dt = passedDateTime ?? DateTime.Now;
-        DateTime startOfYear = dt.StartOfYear();
+        DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         //Add if not in a Yearly Playlist already and if the video was submitted after the start of the Year
-        return video => (video.YearlyPlaylistItemId == null || video.YearlyPlaylistItemId.Length == 0) && startOfYear <= video.TimeSubmitted;
+        return video => (video.YearlyPlaylistItemId == null || video.YearlyPlaylistItemId.Length == 0) && dt.Year == video.TimeSubmitted.Year;
     }
 
     //Weekly Remove
@@ -1087,8 +1088,9 @@ internal class Database
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfWeek = use7days ? dt.OneWeekAgo() : dt.StartOfWeek(StartOfWeek);
+        LocalDateTime startOfWeekLocal = LocalDateTime.FromDateTime(startOfWeek);
         //Remove if in a valid Weekly Playlist already but the video was submitted before the start of the week
-        return video => (video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfWeek;
+        return video => (video.WeeklyPlaylistItemId != null && video.WeeklyPlaylistItemId.Length != 0) && video.TimeSubmitted.LocalDateTime < startOfWeekLocal;
     }
     internal async Task<List<string?>> GetPlaylistItemsToRemoveWeekly(DateTime? passedDateTime = null)
     {
@@ -1117,7 +1119,7 @@ internal class Database
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
         DateTime startOfMonth = dt.StartOfMonth();
         //Remove if in a valid Monthly Playlist already but the video was submitted before the start of the Month
-        return video => (video.MonthlyPlaylistItemId != null && video.MonthlyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfMonth;
+        return video => (video.MonthlyPlaylistItemId != null && video.MonthlyPlaylistItemId.Length != 0) && video.TimeSubmitted.Month != dt.Month || video.TimeSubmitted.Year != dt.Year;
     }
 
     internal async Task<List<string?>> GetPlaylistItemsToRemoveMonthly(DateTime? passedDateTime = null)
@@ -1149,9 +1151,8 @@ internal class Database
     private static Expression<Func<SubmittedVideoData, bool>> YearlySubmissionsToRemoveFunc(DateTime? passedDateTime = null, bool use7days = false)
     {
         DateTime dt = (passedDateTime ?? DateTime.Now).ToUniversalTime();
-        DateTime startOfYear = dt.StartOfYear();
         //Remove if in a valid Yearly Playlist already but the video was submitted before the start of the Year
-        return video => (video.YearlyPlaylistItemId != null && video.YearlyPlaylistItemId.Length != 0) && video.TimeSubmitted < startOfYear;
+        return video => (video.YearlyPlaylistItemId != null && video.YearlyPlaylistItemId.Length != 0) && video.TimeSubmitted.Year != dt.Year;
     }
     internal async Task<List<string?>> GetPlaylistItemsToRemoveYearly(DateTime? passedDateTime = null)
     {
@@ -1280,7 +1281,7 @@ internal class Database
             playlistData.WeeklyTimeCreated = 
             playlistData.MonthlyTimeCreated =
             playlistData.YearlyTimeCreated =
-                timeCreated.Value;
+                ZonedDateTime.FromDateTimeOffset(timeCreated.Value).WithZone(DateTimeZone.Utc);
         }
         await InsertRow(playlistData).ConfigureAwait(false);
     }
